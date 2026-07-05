@@ -26,6 +26,11 @@ Select a topic and press `Ctrl+C`, then select a destination topic and press
 `Ctrl+V` to copy the complete subtree. A non-root topic can also be dragged onto
 another topic to move it there.
 
+Drag on empty canvas space with the left mouse button to select multiple topics.
+Dragging any selected topic moves the selected top-level topics as a group.
+Drag with the middle mouse button, or use the mouse wheel, to pan the canvas.
+Use `Ctrl` with the mouse wheel to zoom.
+
 ## Run locally
 
 The app is built with plain HTML, CSS, and JavaScript. Open `index.html` directly,

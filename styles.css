@@ -519,7 +519,7 @@ button {
   position: relative;
   min-width: 0;
   flex: 1;
-  overflow: hidden;
+  overflow: clip;
   outline: none;
   background: var(--canvas);
   cursor: default;
@@ -529,6 +529,10 @@ button {
   cursor: grabbing;
 }
 
+.canvas-viewport.selecting {
+  cursor: crosshair;
+}
+
 .canvas-grid {
   position: absolute;
   inset: 0;
@@ -536,6 +540,18 @@ button {
   background-image: radial-gradient(circle, #d9dde3 1px, transparent 1px);
   background-size: 22px 22px;
   pointer-events: none;
+}
+
+.selection-marquee {
+  position: absolute;
+  z-index: 15;
+  border: 1.5px solid #2e7cf6;
+  background: rgba(46, 124, 246, 0.1);
+  pointer-events: none;
+}
+
+.selection-marquee[hidden] {
+  display: none;
 }
 
 .mindmap-stage {
@@ -599,6 +615,10 @@ button {
 .topic-node.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(46, 124, 246, 0.15), 0 7px 18px rgba(25, 52, 95, 0.12);
+}
+
+.topic-node.selected.primary {
+  box-shadow: 0 0 0 3px rgba(46, 124, 246, 0.22), 0 7px 18px rgba(25, 52, 95, 0.16);
 }
 
 .topic-node.selected::after {

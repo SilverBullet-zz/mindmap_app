@@ -9,6 +9,7 @@ let nodes = [
 ];
 
 let selectedId = "root";
+let selectedIds = new Set(["root"]);
 let editingId = null;
 let nodeCounter = 5;
 let zoom = 1;
@@ -35,6 +36,7 @@ const pasteButton = document.querySelector("#paste-button");
 const openButton = document.querySelector("#open-button");
 const saveButton = document.querySelector("#save-button");
 const openFileInput = document.querySelector("#open-file-input");
+const selectionMarquee = document.querySelector("#selection-marquee");
 
 function cloneNodes(source = nodes) {
   return source.map((node) => ({ ...node }));
@@ -91,6 +93,36 @@ function descendantsOf(id) {
   return output;
 }
 
+function selectionRootIds({ excludeRoot = false } = {}) {
+  const candidates = [...selectedIds].filter((id) => getNode(id) && (!excludeRoot || id !== "root"));
+  const candidateSet = new Set(candidates);
+  return candidates.filter((id) => {
+    let parentId = getNode(id)?.parentId;
+    while (parentId !== null && parentId !== undefined) {
+      if (candidateSet.has(parentId)) return false;
+      parentId = getNode(parentId)?.parentId;
+    }
+    return true;
+  });
+}
+
+function refreshSelectionClasses() {
+  nodesLayer.querySelectorAll(".topic-node").forEach((element) => {
+    const selected = selectedIds.has(element.dataset.id);
+    element.classList.toggle("selected", selected);
+    element.classList.toggle("primary", selected && element.dataset.id === selectedId);
+    element.setAttribute("aria-selected", selected ? "true" : "false");
+  });
+}
+
+function setSelection(ids, primaryId) {
+  const validIds = [...new Set(ids)].filter((id) => getNode(id));
+  selectedIds = new Set(validIds);
+  selectedId = getNode(primaryId) ? primaryId : validIds[0] || "root";
+  editingId = null;
+  refreshSelectionClasses();
+}
+
 function leafWeight(id) {
   const children = childrenOf(id);
   return children.length ? children.reduce((sum, child) => sum + leafWeight(child.id), 0) : 1;
@@ -142,14 +174,15 @@ function render() {
 
   nodes.forEach((node) => {
     const element = document.createElement("div");
-    element.className = `topic-node${node.id === "root" ? " root" : ""}${node.id === selectedId ? " selected" : ""}${node.id === editingId ? " editing" : ""}`;
+    const isSelected = selectedIds.has(node.id);
+    element.className = `topic-node${node.id === "root" ? " root" : ""}${isSelected ? " selected" : ""}${node.id === selectedId && isSelected ? " primary" : ""}${node.id === editingId ? " editing" : ""}`;
     element.dataset.id = node.id;
     element.style.left = `${node.x}px`;
     element.style.top = `${node.y}px`;
     element.style.background = node.color;
     element.setAttribute("role", "button");
     element.setAttribute("aria-label", node.text);
-    element.setAttribute("aria-selected", node.id === selectedId ? "true" : "false");
+    element.setAttribute("aria-selected", isSelected ? "true" : "false");
 
     const label = document.createElement("span");
     label.className = "topic-label";
@@ -204,6 +237,7 @@ function drawConnections() {
 function selectNode(id) {
   if (!getNode(id)) return;
   selectedId = id;
+  selectedIds = new Set([id]);
   editingId = null;
   hintText.textContent = "双击主题进行编辑";
   render();
@@ -214,6 +248,7 @@ function beginEditing(id = selectedId, selectAll = false) {
   const node = getNode(id);
   if (!node) return;
   selectedId = id;
+  selectedIds = new Set([id]);
   editingId = id;
   editSnapshot = node.text;
   hintText.textContent = "Enter 新建分支 · Esc 完成编辑";
@@ -278,29 +313,31 @@ function addChild(parentId = selectedId, startEditing = true) {
     y: 0,
   });
   selectedId = id;
+  selectedIds = new Set([id]);
   editingId = null;
   render();
   if (startEditing) beginEditing(id, true);
 }
 
 function deleteSelected() {
-  if (selectedId === "root") return;
-  const node = getNode(selectedId);
-  if (!node) return;
+  const roots = selectionRootIds({ excludeRoot: true });
+  if (!roots.length) return;
+  const fallbackId = getNode(roots[0])?.parentId || "root";
   pushHistory();
-  const removeIds = new Set([selectedId, ...descendantsOf(selectedId)]);
-  selectedId = node.parentId;
+  const removeIds = new Set(roots.flatMap((id) => [id, ...descendantsOf(id)]));
+  selectedId = fallbackId;
+  selectedIds = new Set([fallbackId]);
   editingId = null;
   nodes = nodes.filter((item) => !removeIds.has(item.id));
   render();
 }
 
 function copySelectedSubtree() {
-  const root = getNode(selectedId);
-  if (!root) return;
-  const copiedIds = new Set([root.id, ...descendantsOf(root.id)]);
+  const rootIds = selectionRootIds();
+  if (!rootIds.length) return;
+  const copiedIds = new Set(rootIds.flatMap((id) => [id, ...descendantsOf(id)]));
   internalClipboard = {
-    rootId: root.id,
+    rootIds,
     nodes: nodes.filter((node) => copiedIds.has(node.id)).map((node) => ({ ...node })),
   };
   pasteButton.disabled = false;
@@ -316,17 +353,19 @@ function pasteSubtree(targetId = selectedId) {
   internalClipboard.nodes.forEach((node) => {
     idMap.set(node.id, `n${nodeCounter++}`);
   });
-  const rootSide = target.id === "root" ? chooseSide(target) : target.side || 1;
+  const rootIdSet = new Set(internalClipboard.rootIds);
   const pastedNodes = internalClipboard.nodes.map((node) => ({
     ...node,
     id: idMap.get(node.id),
-    parentId: node.id === internalClipboard.rootId ? target.id : idMap.get(node.parentId),
-    side: rootSide,
+    parentId: rootIdSet.has(node.id) ? target.id : idMap.get(node.parentId),
+    side: target.id === "root" ? chooseSide(target) : target.side || 1,
     x: 0,
     y: 0,
   }));
   nodes.push(...pastedNodes);
-  selectedId = idMap.get(internalClipboard.rootId);
+  const newRootIds = internalClipboard.rootIds.map((id) => idMap.get(id));
+  selectedId = newRootIds[0];
+  selectedIds = new Set(newRootIds);
   editingId = null;
   render();
   showStatus(`已粘贴到“${target.text}”下`);
@@ -364,6 +403,8 @@ function undo() {
   future.push(cloneNodes());
   nodes = history.pop();
   selectedId = getNode(selectedId) ? selectedId : "root";
+  selectedIds = new Set([...selectedIds].filter((id) => getNode(id)));
+  if (!selectedIds.size) selectedIds.add(selectedId);
   updateHistoryButtons();
   render();
 }
@@ -373,6 +414,8 @@ function redo() {
   history.push(cloneNodes());
   nodes = future.pop();
   selectedId = getNode(selectedId) ? selectedId : "root";
+  selectedIds = new Set([...selectedIds].filter((id) => getNode(id)));
+  if (!selectedIds.size) selectedIds.add(selectedId);
   updateHistoryButtons();
   render();
 }
@@ -384,6 +427,8 @@ function setZoom(nextZoom) {
 
 function fitCanvas() {
   pan = { x: 0, y: 0 };
+  viewport.scrollLeft = 0;
+  viewport.scrollTop = 0;
   const maxX = Math.max(...nodes.map((node) => Math.abs(node.x))) + 170;
   const maxY = Math.max(...nodes.map((node) => Math.abs(node.y))) + 70;
   const availableWidth = Math.max(320, viewport.clientWidth - 100);
@@ -483,6 +528,7 @@ async function openProject(file) {
     const data = normalizeProject(JSON.parse(await file.text()));
     nodes = data.nodes;
     selectedId = "root";
+    selectedIds = new Set(["root"]);
     editingId = null;
     internalClipboard = null;
     history = [];
@@ -540,9 +586,9 @@ nodesLayer.addEventListener("keydown", (event) => {
   }
 });
 
-function isValidDropTarget(draggedId, targetId) {
-  if (!targetId || draggedId === targetId) return false;
-  return !descendantsOf(draggedId).includes(targetId);
+function isValidDropTarget(draggedIds, targetId) {
+  if (!targetId || draggedIds.includes(targetId)) return false;
+  return draggedIds.every((id) => !descendantsOf(id).includes(targetId));
 }
 
 function clearDragVisuals() {
@@ -554,13 +600,15 @@ function clearDragVisuals() {
 
 nodesLayer.addEventListener("pointerdown", (event) => {
   const element = event.target.closest(".topic-node");
-  if (!element || editingId || event.button !== 0 || element.dataset.id === "root") return;
-  selectedId = element.dataset.id;
-  nodesLayer.querySelectorAll(".topic-node.selected").forEach((nodeElement) => {
-    nodeElement.classList.toggle("selected", nodeElement === element);
-  });
+  if (!element || editingId || event.button !== 0) return;
+  const clickedId = element.dataset.id;
+  if (!selectedIds.has(clickedId)) setSelection([clickedId], clickedId);
+  if (clickedId === "root") return;
+  const draggedIds = selectionRootIds({ excludeRoot: true });
+  if (!draggedIds.length) return;
   nodeDrag = {
-    id: element.dataset.id,
+    ids: draggedIds,
+    primaryId: draggedIds.includes(selectedId) ? selectedId : draggedIds[0],
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
@@ -577,10 +625,14 @@ nodesLayer.addEventListener("pointermove", (event) => {
 
   if (!nodeDrag.active) {
     nodeDrag.active = true;
-    nodesLayer.querySelector(`[data-id="${nodeDrag.id}"]`)?.classList.add("dragging");
+    nodeDrag.ids.forEach((id) => {
+      nodesLayer.querySelector(`[data-id="${id}"]`)?.classList.add("dragging");
+    });
     const ghost = document.createElement("div");
     ghost.className = "drag-ghost";
-    ghost.textContent = getNode(nodeDrag.id)?.text || "";
+    ghost.textContent = nodeDrag.ids.length === 1
+      ? getNode(nodeDrag.ids[0])?.text || ""
+      : `${nodeDrag.ids.length} 个主题`;
     document.body.append(ghost);
     hintText.textContent = "拖到目标主题上以移动 · Esc 取消";
   }
@@ -593,7 +645,7 @@ nodesLayer.addEventListener("pointermove", (event) => {
   nodesLayer.querySelector(".drop-target")?.classList.remove("drop-target");
   const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest(".topic-node");
   const targetId = targetElement?.dataset.id;
-  nodeDrag.targetId = isValidDropTarget(nodeDrag.id, targetId) ? targetId : null;
+  nodeDrag.targetId = isValidDropTarget(nodeDrag.ids, targetId) ? targetId : null;
   if (nodeDrag.targetId) targetElement.classList.add("drop-target");
 });
 
@@ -618,18 +670,21 @@ function finishNodeDrag(event, cancelled = false) {
     return;
   }
 
-  const draggedNode = getNode(dragState.id);
   const targetNode = getNode(dragState.targetId);
-  if (!draggedNode || !targetNode || draggedNode.parentId === targetNode.id) {
+  const draggedNodes = dragState.ids.map((id) => getNode(id)).filter(Boolean);
+  if (!draggedNodes.length || !targetNode || draggedNodes.every((node) => node.parentId === targetNode.id)) {
     render();
     return;
   }
   pushHistory();
-  draggedNode.parentId = targetNode.id;
-  draggedNode.side = targetNode.id === "root" ? chooseSide(targetNode) : targetNode.side || 1;
-  selectedId = draggedNode.id;
+  draggedNodes.forEach((node) => {
+    node.parentId = targetNode.id;
+    node.side = targetNode.id === "root" ? chooseSide(targetNode) : targetNode.side || 1;
+  });
+  selectedId = dragState.primaryId;
+  selectedIds = new Set(dragState.ids);
   render();
-  showStatus(`已移到“${targetNode.text}”下`);
+  showStatus(`已将 ${draggedNodes.length} 个主题移到“${targetNode.text}”下`);
 }
 
 nodesLayer.addEventListener("pointerup", (event) => finishNodeDrag(event));
@@ -709,31 +764,107 @@ openFileInput.addEventListener("change", () => {
 document.querySelector("#document-title").addEventListener("input", markSaving);
 
 viewport.addEventListener("wheel", (event) => {
-  if (!event.ctrlKey) return;
   event.preventDefault();
-  setZoom(zoom + (event.deltaY > 0 ? -0.08 : 0.08));
+  viewport.scrollLeft = 0;
+  viewport.scrollTop = 0;
+  if (event.ctrlKey) {
+    setZoom(zoom + (event.deltaY > 0 ? -0.08 : 0.08));
+    return;
+  }
+  if (event.shiftKey && Math.abs(event.deltaX) < 1) {
+    pan.x -= event.deltaY;
+  } else {
+    pan.x -= event.deltaX;
+    pan.y -= event.deltaY;
+  }
+  applyTransform();
 }, { passive: false });
 
 let dragStart = null;
+let marqueeState = null;
 viewport.addEventListener("pointerdown", (event) => {
   if (event.target.closest(".topic-node") || event.target.closest(".zoom-controls")) return;
-  dragStart = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
-  viewport.classList.add("panning");
-  viewport.setPointerCapture(event.pointerId);
+  if (event.button === 1) {
+    event.preventDefault();
+    dragStart = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+    viewport.classList.add("panning");
+    viewport.setPointerCapture(event.pointerId);
+  } else if (event.button === 0) {
+    event.preventDefault();
+    marqueeState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      baseIds: event.ctrlKey || event.metaKey ? new Set(selectedIds) : new Set(),
+    };
+    viewport.classList.add("selecting");
+    viewport.setPointerCapture(event.pointerId);
+  }
 });
 
 viewport.addEventListener("pointermove", (event) => {
-  if (!dragStart) return;
-  pan.x = dragStart.panX + event.clientX - dragStart.x;
-  pan.y = dragStart.panY + event.clientY - dragStart.y;
-  applyTransform();
+  if (dragStart && dragStart.pointerId === event.pointerId) {
+    pan.x = dragStart.panX + event.clientX - dragStart.x;
+    pan.y = dragStart.panY + event.clientY - dragStart.y;
+    applyTransform();
+    return;
+  }
+  if (!marqueeState || marqueeState.pointerId !== event.pointerId) return;
+  const dx = event.clientX - marqueeState.startX;
+  const dy = event.clientY - marqueeState.startY;
+  if (!marqueeState.active && Math.hypot(dx, dy) < 4) return;
+  marqueeState.active = true;
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const left = Math.min(marqueeState.startX, event.clientX);
+  const top = Math.min(marqueeState.startY, event.clientY);
+  const right = Math.max(marqueeState.startX, event.clientX);
+  const bottom = Math.max(marqueeState.startY, event.clientY);
+  selectionMarquee.hidden = false;
+  selectionMarquee.style.left = `${left - viewportRect.left}px`;
+  selectionMarquee.style.top = `${top - viewportRect.top}px`;
+  selectionMarquee.style.width = `${right - left}px`;
+  selectionMarquee.style.height = `${bottom - top}px`;
+
+  const matches = [];
+  nodesLayer.querySelectorAll(".topic-node").forEach((element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom) {
+      matches.push(element.dataset.id);
+    }
+  });
+  const nextIds = new Set([...marqueeState.baseIds, ...matches]);
+  const primaryId = nextIds.has(selectedId) ? selectedId : matches[0] || [...nextIds][0];
+  setSelection([...nextIds], primaryId);
+  hintText.textContent = nextIds.size ? `已选择 ${nextIds.size} 个主题` : "拖动框选多个主题";
 });
 
-viewport.addEventListener("pointerup", (event) => {
-  dragStart = null;
-  viewport.classList.remove("panning");
+function finishCanvasPointer(event) {
+  if (dragStart && dragStart.pointerId === event.pointerId) {
+    dragStart = null;
+    viewport.classList.remove("panning");
+  }
+  if (marqueeState && marqueeState.pointerId === event.pointerId) {
+    if (!marqueeState.active && !event.ctrlKey && !event.metaKey) setSelection([], "root");
+    marqueeState = null;
+    selectionMarquee.hidden = true;
+    viewport.classList.remove("selecting");
+    hintText.textContent = selectedIds.size > 1
+      ? `已选择 ${selectedIds.size} 个主题 · 拖动任一主题可批量移动`
+      : "双击主题进行编辑";
+  }
   if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
-});
+}
+
+viewport.addEventListener("pointerup", finishCanvasPointer);
+viewport.addEventListener("pointercancel", finishCanvasPointer);
 
 function roundedRect(context, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);
