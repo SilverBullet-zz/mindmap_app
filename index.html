@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f8fa" />
+    <title>枝图 - 思维导图</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand" aria-label="枝图">
+          <span class="brand-mark" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </span>
+          <span>枝图</span>
+        </div>
+        <div class="document-title">
+          <input id="document-title" value="未命名思维导图" aria-label="文档名称" />
+          <span class="save-state">已保存</span>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button" id="undo-button" type="button" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled>
+            <span aria-hidden="true">↶</span>
+          </button>
+          <button class="icon-button" id="redo-button" type="button" title="重做 (Ctrl+Shift+Z)" aria-label="重做" disabled>
+            <span aria-hidden="true">↷</span>
+          </button>
+          <span class="toolbar-divider"></span>
+          <div class="export-control">
+            <button class="primary-button" id="export-button" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="export-icon" aria-hidden="true">↓</span>
+              导出
+              <span class="menu-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="export-menu" id="export-menu" role="menu" hidden>
+              <button type="button" role="menuitem" data-export-format="png">
+                <span class="format-badge png">PNG</span>
+                <span><strong>PNG 图片</strong><small>高清透明兼容图片</small></span>
+              </button>
+              <button type="button" role="menuitem" data-export-format="pdf">
+                <span class="format-badge pdf">PDF</span>
+                <span><strong>PDF 文档</strong><small>适合打印与分享</small></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="tool-rail" aria-label="思维导图工具">
+          <button class="tool-button active" type="button" title="选择" aria-label="选择">
+            <span class="cursor-icon" aria-hidden="true"></span>
+          </button>
+          <button class="tool-button" id="add-button" type="button" title="添加分支 (Enter)" aria-label="添加分支">
+            <span class="plus-icon" aria-hidden="true"></span>
+          </button>
+          <button class="tool-button" id="edit-button" type="button" title="编辑主题 (F2)" aria-label="编辑主题">
+            <span class="edit-icon" aria-hidden="true"></span>
+          </button>
+          <span class="rail-divider"></span>
+          <button class="tool-button danger" id="delete-button" type="button" title="删除主题 (Delete)" aria-label="删除主题">
+            <span class="trash-icon" aria-hidden="true"></span>
+          </button>
+        </aside>
+
+        <main class="canvas-viewport" id="canvas-viewport" tabindex="0" aria-label="思维导图画布">
+          <div class="canvas-grid"></div>
+          <div class="mindmap-stage" id="mindmap-stage">
+            <svg class="connections" id="connections" aria-hidden="true"></svg>
+            <div id="nodes-layer"></div>
+          </div>
+
+          <div class="canvas-hint" id="canvas-hint">
+            <span class="hint-dot"></span>
+            <span id="hint-text">双击主题进行编辑</span>
+          </div>
+
+          <div class="zoom-controls" aria-label="缩放工具">
+            <button id="zoom-out" type="button" title="缩小" aria-label="缩小">−</button>
+            <span id="zoom-label">100%</span>
+            <button id="zoom-in" type="button" title="放大" aria-label="放大">+</button>
+            <span class="zoom-divider"></span>
+            <button id="fit-button" type="button" title="适应画布" aria-label="适应画布">
+              <span class="fit-icon" aria-hidden="true"></span>
+            </button>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
