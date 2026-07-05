@@ -16,6 +16,9 @@ let pan = { x: 0, y: 0 };
 let history = [];
 let future = [];
 let editSnapshot = "";
+let internalClipboard = null;
+let nodeDrag = null;
+let suppressNextClick = false;
 
 const viewport = document.querySelector("#canvas-viewport");
 const stage = document.querySelector("#mindmap-stage");
@@ -27,6 +30,11 @@ const undoButton = document.querySelector("#undo-button");
 const redoButton = document.querySelector("#redo-button");
 const exportButton = document.querySelector("#export-button");
 const exportMenu = document.querySelector("#export-menu");
+const copyButton = document.querySelector("#copy-button");
+const pasteButton = document.querySelector("#paste-button");
+const openButton = document.querySelector("#open-button");
+const saveButton = document.querySelector("#save-button");
+const openFileInput = document.querySelector("#open-file-input");
 
 function cloneNodes(source = nodes) {
   return source.map((node) => ({ ...node }));
@@ -52,6 +60,15 @@ function markSaving() {
   markSaving.timer = window.setTimeout(() => {
     label.textContent = "已保存";
   }, 450);
+}
+
+function showStatus(text, duration = 1300) {
+  const label = document.querySelector(".save-state");
+  window.clearTimeout(markSaving.timer);
+  label.textContent = text;
+  markSaving.timer = window.setTimeout(() => {
+    label.textContent = "已保存";
+  }, duration);
 }
 
 function getNode(id) {
@@ -145,6 +162,7 @@ function render() {
 
   requestAnimationFrame(drawConnections);
   applyTransform();
+  pasteButton.disabled = !internalClipboard;
 
   if (editingId) {
     const label = nodesLayer.querySelector(`[data-id="${editingId}"] .topic-label`);
@@ -277,6 +295,43 @@ function deleteSelected() {
   render();
 }
 
+function copySelectedSubtree() {
+  const root = getNode(selectedId);
+  if (!root) return;
+  const copiedIds = new Set([root.id, ...descendantsOf(root.id)]);
+  internalClipboard = {
+    rootId: root.id,
+    nodes: nodes.filter((node) => copiedIds.has(node.id)).map((node) => ({ ...node })),
+  };
+  pasteButton.disabled = false;
+  showStatus(`已复制 ${internalClipboard.nodes.length} 个主题`);
+  viewport.focus({ preventScroll: true });
+}
+
+function pasteSubtree(targetId = selectedId) {
+  const target = getNode(targetId);
+  if (!target || !internalClipboard) return;
+  pushHistory();
+  const idMap = new Map();
+  internalClipboard.nodes.forEach((node) => {
+    idMap.set(node.id, `n${nodeCounter++}`);
+  });
+  const rootSide = target.id === "root" ? chooseSide(target) : target.side || 1;
+  const pastedNodes = internalClipboard.nodes.map((node) => ({
+    ...node,
+    id: idMap.get(node.id),
+    parentId: node.id === internalClipboard.rootId ? target.id : idMap.get(node.parentId),
+    side: rootSide,
+    x: 0,
+    y: 0,
+  }));
+  nodes.push(...pastedNodes);
+  selectedId = idMap.get(internalClipboard.rootId);
+  editingId = null;
+  render();
+  showStatus(`已粘贴到“${target.text}”下`);
+}
+
 function navigate(direction) {
   const current = getNode(selectedId);
   if (!current) return;
@@ -336,7 +391,123 @@ function fitCanvas() {
   setZoom(Math.min(1, availableWidth / (maxX * 2), availableHeight / (maxY * 2)));
 }
 
+function projectData() {
+  return {
+    format: "mindmap",
+    version: 1,
+    title: document.querySelector("#document-title").value.trim() || "未命名思维导图",
+    savedAt: new Date().toISOString(),
+    view: {
+      zoom,
+      pan: { ...pan },
+    },
+    nodes: nodes.map(({ id, parentId, text, side, color }) => ({
+      id,
+      parentId,
+      text,
+      side,
+      color,
+    })),
+  };
+}
+
+function saveProject() {
+  if (editingId) finishEditing();
+  const json = JSON.stringify(projectData(), null, 2);
+  downloadBlob(new Blob([json], { type: "application/json;charset=utf-8" }), exportFilename("mindmap.json"));
+  showStatus("工程已保存");
+}
+
+function normalizeProject(data) {
+  if (!data || data.format !== "mindmap" || data.version !== 1 || !Array.isArray(data.nodes)) {
+    throw new Error("这不是受支持的 Mindmap 工程文件");
+  }
+  if (data.nodes.length < 1 || data.nodes.length > 3000) {
+    throw new Error("工程文件的主题数量无效");
+  }
+
+  const ids = new Set();
+  const normalizedNodes = data.nodes.map((node) => {
+    if (!node || typeof node.id !== "string" || !node.id || ids.has(node.id)) {
+      throw new Error("工程文件包含重复或无效的主题 ID");
+    }
+    ids.add(node.id);
+    return {
+      id: node.id,
+      parentId: node.parentId === null ? null : String(node.parentId),
+      text: String(node.text || "未命名主题").slice(0, 500),
+      side: node.side === -1 ? -1 : node.side === 0 ? 0 : 1,
+      color: /^#[0-9a-f]{6}$/i.test(node.color) ? node.color : "#ffffff",
+      x: 0,
+      y: 0,
+    };
+  });
+
+  const roots = normalizedNodes.filter((node) => node.parentId === null);
+  if (roots.length !== 1 || roots[0].id !== "root") {
+    throw new Error("工程文件必须包含一个中心主题");
+  }
+  const nodesById = new Map(normalizedNodes.map((node) => [node.id, node]));
+  roots[0].side = 0;
+  normalizedNodes.forEach((node) => {
+    if (node.parentId !== null && !ids.has(node.parentId)) {
+      throw new Error(`主题“${node.text}”缺少父主题`);
+    }
+    const visited = new Set([node.id]);
+    let parentId = node.parentId;
+    while (parentId !== null) {
+      if (visited.has(parentId)) throw new Error("工程文件包含循环层级");
+      visited.add(parentId);
+      parentId = nodesById.get(parentId)?.parentId ?? null;
+    }
+  });
+
+  const viewZoom = Number(data.view?.zoom);
+  const viewPanX = Number(data.view?.pan?.x);
+  const viewPanY = Number(data.view?.pan?.y);
+  return {
+    title: typeof data.title === "string" ? data.title.slice(0, 120) : "未命名思维导图",
+    nodes: normalizedNodes,
+    view: {
+      zoom: Number.isFinite(viewZoom) ? Math.min(1.6, Math.max(0.5, viewZoom)) : 1,
+      pan: {
+        x: Number.isFinite(viewPanX) ? viewPanX : 0,
+        y: Number.isFinite(viewPanY) ? viewPanY : 0,
+      },
+    },
+  };
+}
+
+async function openProject(file) {
+  try {
+    const data = normalizeProject(JSON.parse(await file.text()));
+    nodes = data.nodes;
+    selectedId = "root";
+    editingId = null;
+    internalClipboard = null;
+    history = [];
+    future = [];
+    nodeCounter = Math.max(
+      1,
+      ...nodes.map((node) => Number(node.id.match(/^n(\d+)$/)?.[1] || 0))
+    ) + 1;
+    zoom = data.view.zoom;
+    pan = data.view.pan;
+    document.querySelector("#document-title").value = data.title;
+    updateHistoryButtons();
+    render();
+    showStatus("工程已打开");
+    viewport.focus({ preventScroll: true });
+  } catch (error) {
+    console.error(error);
+    showStatus("无法打开此工程", 2200);
+  } finally {
+    openFileInput.value = "";
+  }
+}
+
 nodesLayer.addEventListener("click", (event) => {
+  if (suppressNextClick) return;
   const element = event.target.closest(".topic-node");
   if (!element || editingId) return;
   selectNode(element.dataset.id);
@@ -369,6 +540,101 @@ nodesLayer.addEventListener("keydown", (event) => {
   }
 });
 
+function isValidDropTarget(draggedId, targetId) {
+  if (!targetId || draggedId === targetId) return false;
+  return !descendantsOf(draggedId).includes(targetId);
+}
+
+function clearDragVisuals() {
+  nodesLayer.querySelectorAll(".dragging, .drop-target").forEach((element) => {
+    element.classList.remove("dragging", "drop-target");
+  });
+  document.querySelector(".drag-ghost")?.remove();
+}
+
+nodesLayer.addEventListener("pointerdown", (event) => {
+  const element = event.target.closest(".topic-node");
+  if (!element || editingId || event.button !== 0 || element.dataset.id === "root") return;
+  selectedId = element.dataset.id;
+  nodesLayer.querySelectorAll(".topic-node.selected").forEach((nodeElement) => {
+    nodeElement.classList.toggle("selected", nodeElement === element);
+  });
+  nodeDrag = {
+    id: element.dataset.id,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false,
+    targetId: null,
+  };
+  nodesLayer.setPointerCapture(event.pointerId);
+});
+
+nodesLayer.addEventListener("pointermove", (event) => {
+  if (!nodeDrag || nodeDrag.pointerId !== event.pointerId) return;
+  const distance = Math.hypot(event.clientX - nodeDrag.startX, event.clientY - nodeDrag.startY);
+  if (!nodeDrag.active && distance < 6) return;
+
+  if (!nodeDrag.active) {
+    nodeDrag.active = true;
+    nodesLayer.querySelector(`[data-id="${nodeDrag.id}"]`)?.classList.add("dragging");
+    const ghost = document.createElement("div");
+    ghost.className = "drag-ghost";
+    ghost.textContent = getNode(nodeDrag.id)?.text || "";
+    document.body.append(ghost);
+    hintText.textContent = "拖到目标主题上以移动 · Esc 取消";
+  }
+
+  const ghost = document.querySelector(".drag-ghost");
+  if (ghost) {
+    ghost.style.left = `${event.clientX}px`;
+    ghost.style.top = `${event.clientY}px`;
+  }
+  nodesLayer.querySelector(".drop-target")?.classList.remove("drop-target");
+  const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest(".topic-node");
+  const targetId = targetElement?.dataset.id;
+  nodeDrag.targetId = isValidDropTarget(nodeDrag.id, targetId) ? targetId : null;
+  if (nodeDrag.targetId) targetElement.classList.add("drop-target");
+});
+
+function finishNodeDrag(event, cancelled = false) {
+  if (!nodeDrag || (event && nodeDrag.pointerId !== event.pointerId)) return;
+  const dragState = nodeDrag;
+  nodeDrag = null;
+  if (nodesLayer.hasPointerCapture(dragState.pointerId)) {
+    nodesLayer.releasePointerCapture(dragState.pointerId);
+  }
+  clearDragVisuals();
+  hintText.textContent = "双击主题进行编辑";
+
+  if (dragState.active) {
+    suppressNextClick = true;
+    window.setTimeout(() => {
+      suppressNextClick = false;
+    }, 0);
+  }
+  if (cancelled || !dragState.active || !dragState.targetId) {
+    render();
+    return;
+  }
+
+  const draggedNode = getNode(dragState.id);
+  const targetNode = getNode(dragState.targetId);
+  if (!draggedNode || !targetNode || draggedNode.parentId === targetNode.id) {
+    render();
+    return;
+  }
+  pushHistory();
+  draggedNode.parentId = targetNode.id;
+  draggedNode.side = targetNode.id === "root" ? chooseSide(targetNode) : targetNode.side || 1;
+  selectedId = draggedNode.id;
+  render();
+  showStatus(`已移到“${targetNode.text}”下`);
+}
+
+nodesLayer.addEventListener("pointerup", (event) => finishNodeDrag(event));
+nodesLayer.addEventListener("pointercancel", (event) => finishNodeDrag(event, true));
+
 viewport.addEventListener("keydown", (event) => {
   if (editingId || event.target.matches("input")) return;
   if (event.key.startsWith("Arrow")) {
@@ -391,14 +657,33 @@ viewport.addEventListener("keydown", (event) => {
 
 document.addEventListener("keydown", (event) => {
   const command = event.ctrlKey || event.metaKey;
+  if (event.key === "Escape" && nodeDrag) {
+    event.preventDefault();
+    finishNodeDrag(null, true);
+    return;
+  }
   if (!command) return;
-  if (event.key.toLowerCase() === "z" && event.shiftKey) {
+  const key = event.key.toLowerCase();
+  const editingText = editingId || event.target.matches("input, [contenteditable='true']");
+  if (key === "s") {
+    event.preventDefault();
+    saveProject();
+  } else if (key === "o") {
+    event.preventDefault();
+    openFileInput.click();
+  } else if (key === "c" && !editingText) {
+    event.preventDefault();
+    copySelectedSubtree();
+  } else if (key === "v" && !editingText) {
+    event.preventDefault();
+    pasteSubtree();
+  } else if (key === "z" && event.shiftKey) {
     event.preventDefault();
     redo();
-  } else if (event.key.toLowerCase() === "z") {
+  } else if (key === "z") {
     event.preventDefault();
     undo();
-  } else if (event.key.toLowerCase() === "y") {
+  } else if (key === "y") {
     event.preventDefault();
     redo();
   }
@@ -407,11 +692,19 @@ document.addEventListener("keydown", (event) => {
 document.querySelector("#add-button").addEventListener("click", () => addChild());
 document.querySelector("#edit-button").addEventListener("click", () => beginEditing());
 document.querySelector("#delete-button").addEventListener("click", deleteSelected);
+copyButton.addEventListener("click", copySelectedSubtree);
+pasteButton.addEventListener("click", () => pasteSubtree());
 document.querySelector("#zoom-in").addEventListener("click", () => setZoom(zoom + 0.1));
 document.querySelector("#zoom-out").addEventListener("click", () => setZoom(zoom - 0.1));
 document.querySelector("#fit-button").addEventListener("click", fitCanvas);
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
+saveButton.addEventListener("click", saveProject);
+openButton.addEventListener("click", () => openFileInput.click());
+openFileInput.addEventListener("change", () => {
+  const file = openFileInput.files?.[0];
+  if (file) openProject(file);
+});
 
 document.querySelector("#document-title").addEventListener("input", markSaving);
 

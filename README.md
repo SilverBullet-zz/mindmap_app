@@ -10,8 +10,21 @@ A lightweight, dependency-free mind map editor inspired by XMind.
 - Keyboard navigation with arrow keys
 - `Enter` to create a child branch
 - `Esc` to leave editing mode
+- Copy and paste complete topic subtrees
+- Drag topics onto another topic to reorganize the hierarchy
 - Undo, redo, delete, zoom, and canvas panning
+- Native `.mindmap.json` project save and open
 - High-resolution PNG and PDF export
+
+## Project files
+
+Use the folder and disk icons in the top toolbar to open or save an editable
+`.mindmap.json` project. This native format preserves the document title, topic
+hierarchy, branch sides, colors, and viewport state.
+
+Select a topic and press `Ctrl+C`, then select a destination topic and press
+`Ctrl+V` to copy the complete subtree. A non-root topic can also be dragged onto
+another topic to move it there.
 
 ## Run locally
 
@@ -36,4 +49,3 @@ git push -u origin feature/your-feature
 ```
 
 Open a pull request on GitHub and merge it after review.
-
