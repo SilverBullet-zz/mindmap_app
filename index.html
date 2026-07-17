@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f7f8fa" />
+    <meta name="theme-color" content="#eefbf3" />
     <title>枝图 - 思维导图</title>
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=28" />
   </head>
   <body>
     <div class="app-shell">
@@ -21,11 +21,15 @@
           <span class="save-state">已保存</span>
         </div>
         <div class="top-actions">
-          <button class="icon-button file-button" id="open-button" type="button" title="打开工程 (Ctrl+O)" aria-label="打开工程">
-            <span class="folder-icon" aria-hidden="true"></span>
+          <button class="secondary-button" id="home-button" type="button" title="本地思维导图首页" aria-label="本地思维导图首页">
+            首页
           </button>
-          <button class="icon-button file-button" id="save-button" type="button" title="保存工程 (Ctrl+S)" aria-label="保存工程">
+          <button class="secondary-button open-local-button" id="open-local-button" type="button" title="打开本地 .mindmap.json 文件" aria-label="打开本地文件">
+            打开本地文件
+          </button>
+          <button class="command-button file-button" id="save-button" type="button" title="保存工程 (Ctrl+S)" aria-label="保存工程">
             <span class="save-icon" aria-hidden="true"></span>
+            <span>保存</span>
           </button>
           <input id="open-file-input" type="file" accept=".json,.mindmap.json,application/json" hidden />
           <span class="toolbar-divider"></span>
@@ -43,6 +47,10 @@
               <span class="menu-chevron" aria-hidden="true"></span>
             </button>
             <div class="export-menu" id="export-menu" role="menu" hidden>
+              <button type="button" role="menuitem" data-export-format="mindmap">
+                <span class="format-badge mindmap">MAP</span>
+                <span><strong>Mindmap 工程</strong><small>可继续编辑的 .mindmap.json</small></span>
+              </button>
               <button type="button" role="menuitem" data-export-format="png">
                 <span class="format-badge png">PNG</span>
                 <span><strong>PNG 图片</strong><small>高清透明兼容图片</small></span>
@@ -61,7 +69,7 @@
           <button class="tool-button active" type="button" title="选择" aria-label="选择">
             <span class="cursor-icon" aria-hidden="true"></span>
           </button>
-          <button class="tool-button" id="add-button" type="button" title="添加分支 (Enter)" aria-label="添加分支">
+          <button class="tool-button" id="add-button" type="button" title="添加子主题 (Tab)" aria-label="添加子主题">
             <span class="plus-icon" aria-hidden="true"></span>
           </button>
           <button class="tool-button" id="edit-button" type="button" title="编辑主题 (F2)" aria-label="编辑主题">
@@ -104,8 +112,46 @@
           </div>
         </main>
       </div>
+
+      <section class="home-overlay" id="home-overlay" hidden aria-label="本地思维导图首页">
+        <div class="home-panel">
+          <div class="home-header">
+            <div>
+              <h1>本地思维导图</h1>
+              <p>自动保存的文件会保存在此浏览器中，刷新页面后可以继续编辑。</p>
+            </div>
+            <div class="home-actions">
+              <button class="secondary-button" id="new-local-map" type="button">新建</button>
+              <button class="secondary-button" id="trash-button" type="button" aria-pressed="false">垃圾桶</button>
+              <button class="icon-button" id="close-home" type="button" title="关闭首页" aria-label="关闭首页">×</button>
+            </div>
+          </div>
+          <div class="home-list" id="home-list"></div>
+        </div>
+      </section>
+
+      <section class="document-overlay" id="node-document-overlay" hidden aria-label="主题文档页面">
+        <div class="document-panel">
+          <header class="document-panel-header">
+            <div>
+              <span class="document-kicker">Markdown</span>
+              <h1 id="node-document-title">主题文档</h1>
+            </div>
+            <div class="document-actions">
+              <button class="secondary-button" id="copy-document-button" type="button">复制</button>
+              <button class="secondary-button" id="insert-image-button" type="button">插入图片</button>
+              <button class="icon-button" id="close-document-button" type="button" title="关闭文档" aria-label="关闭文档">×</button>
+            </div>
+          </header>
+          <div class="document-workspace">
+            <textarea id="node-document-editor" spellcheck="false" aria-label="Markdown 编辑器"></textarea>
+            <article class="markdown-preview" id="node-document-preview" aria-label="Markdown 预览"></article>
+          </div>
+          <input id="document-image-input" type="file" accept="image/*" hidden />
+        </div>
+      </section>
     </div>
 
-    <script src="./app.js?v=5"></script>
+    <script src="./app.js?v=28"></script>
   </body>
 </html>
