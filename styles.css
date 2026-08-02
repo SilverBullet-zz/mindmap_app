@@ -1211,6 +1211,19 @@ button {
   margin: 0 0 1em;
 }
 
+.markdown-preview a {
+  color: #1f7f70;
+  font-weight: 650;
+  text-decoration-color: rgba(31, 127, 112, 0.35);
+  text-underline-offset: 3px;
+}
+
+.markdown-preview a:hover,
+.markdown-preview a:focus-visible {
+  color: #145f55;
+  text-decoration-color: currentColor;
+}
+
 .markdown-preview figure {
   margin: 18px 0;
 }

@@ -538,6 +538,34 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function isSafeUrl(value) {
+  try {
+    const url = new URL(String(value).trim(), window.location.href);
+    return ["http:", "https:", "mailto:", "tel:", "data:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+function renderInlineMarkdown(value) {
+  const source = escapeHtml(value);
+  const linked = source.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, text, url) => {
+    const decodedUrl = url.replace(/&amp;/g, "&");
+    if (!isSafeUrl(decodedUrl)) return match;
+    return `<a href="${escapeAttribute(decodedUrl)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  });
+  return linked.replace(/(^|[\s>])((?:https?:\/\/|mailto:)[^\s<]+)/g, (match, prefix, url) => {
+    const cleanUrl = url.replace(/[.,;:!?)]$/, "");
+    const suffix = url.slice(cleanUrl.length);
+    if (!isSafeUrl(cleanUrl)) return match;
+    return `${prefix}<a href="${escapeAttribute(cleanUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cleanUrl)}</a>${escapeHtml(suffix)}`;
+  });
+}
+
 function defaultNodeDocument(node) {
   return `# ${node?.text || "未命名主题"}\n\n`;
 }
@@ -563,9 +591,9 @@ function renderMarkdown(markdown) {
     } else if (heading) {
       flushParagraph();
       const level = heading[1].length;
-      output.push(`<h${level}>${escapeHtml(heading[2])}</h${level}>`);
+      output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
     } else {
-      paragraph.push(escapeHtml(line));
+      paragraph.push(renderInlineMarkdown(line));
     }
   });
   flushParagraph();
@@ -613,6 +641,17 @@ function insertAtDocumentCursor(text) {
   const caret = start + text.length;
   nodeDocumentEditor.setSelectionRange(caret, caret);
   syncActiveDocument();
+}
+
+function insertDocumentLink(url) {
+  const start = nodeDocumentEditor.selectionStart ?? nodeDocumentEditor.value.length;
+  const end = nodeDocumentEditor.selectionEnd ?? start;
+  const selectedText = nodeDocumentEditor.value.slice(start, end).trim();
+  if (selectedText && isSafeUrl(url)) {
+    insertAtDocumentCursor(`[${selectedText}](${url.trim()})`);
+    return true;
+  }
+  return false;
 }
 
 function removeTrailingSpaceBeforeCaret() {
@@ -1671,6 +1710,12 @@ openFileInput.addEventListener("change", () => {
 document.querySelector("#document-title").addEventListener("input", markSaving);
 
 nodeDocumentEditor.addEventListener("input", () => syncActiveDocument());
+nodeDocumentEditor.addEventListener("paste", (event) => {
+  const pastedText = event.clipboardData?.getData("text/plain") || "";
+  if (!/^https?:\/\/\S+$/i.test(pastedText.trim())) return;
+  if (!insertDocumentLink(pastedText)) return;
+  event.preventDefault();
+});
 closeDocumentButton.addEventListener("click", closeNodeDocument);
 nodeDocumentOverlay.addEventListener("click", (event) => {
   if (event.target === nodeDocumentOverlay) closeNodeDocument();
