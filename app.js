@@ -600,6 +600,44 @@ function renderMarkdown(markdown) {
   return output.join("") || "<p></p>";
 }
 
+function markdownLinksFromHtml(html) {
+  if (!html) return "";
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const links = [...template.content.querySelectorAll("a[href]")];
+  if (!links.length) return "";
+  return links
+    .map((link) => {
+      const href = link.href;
+      const text = (link.textContent || href).replace(/\s+/g, " ").trim();
+      if (!/^https?:\/\//i.test(href)) return "";
+      return `[${text || href}](${href})`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function normalizePastedDocumentText(event) {
+  const htmlLinks = markdownLinksFromHtml(event.clipboardData?.getData("text/html"));
+  if (htmlLinks) return htmlLinks;
+  return event.clipboardData?.getData("text/plain") || "";
+}
+
+function linkAtDocumentPosition(position) {
+  const value = nodeDocumentEditor.value;
+  const markdownLinkPattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  let match;
+  while ((match = markdownLinkPattern.exec(value))) {
+    if (position >= match.index && position <= match.index + match[0].length) return match[2];
+  }
+
+  const urlPattern = /https?:\/\/[^\s)]+/g;
+  while ((match = urlPattern.exec(value))) {
+    if (position >= match.index && position <= match.index + match[0].length) return match[0];
+  }
+  return "";
+}
+
 function syncActiveDocument({ markDirty = true } = {}) {
   if (!activeDocumentId) return;
   const node = getNode(activeDocumentId);
@@ -1711,10 +1749,21 @@ document.querySelector("#document-title").addEventListener("input", markSaving);
 
 nodeDocumentEditor.addEventListener("input", () => syncActiveDocument());
 nodeDocumentEditor.addEventListener("paste", (event) => {
-  const pastedText = event.clipboardData?.getData("text/plain") || "";
-  if (!/^https?:\/\/\S+$/i.test(pastedText.trim())) return;
-  if (!insertDocumentLink(pastedText)) return;
+  const pasted = normalizePastedDocumentText(event);
+  if (!pasted) return;
+  if (/^https?:\/\/\S+$/i.test(pasted.trim()) && insertDocumentLink(pasted)) {
+    event.preventDefault();
+    return;
+  }
   event.preventDefault();
+  insertAtDocumentCursor(pasted);
+});
+nodeDocumentEditor.addEventListener("click", (event) => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  const link = linkAtDocumentPosition(nodeDocumentEditor.selectionStart || 0);
+  if (!link) return;
+  event.preventDefault();
+  window.open(link, "_blank", "noopener,noreferrer");
 });
 closeDocumentButton.addEventListener("click", closeNodeDocument);
 nodeDocumentOverlay.addEventListener("click", (event) => {
