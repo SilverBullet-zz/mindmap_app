@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#eefbf3" />
     <title>枝图 - 思维导图</title>
-    <link rel="stylesheet" href="./styles.css?v=28" />
+    <link rel="stylesheet" href="./styles.css?v=29" />
   </head>
   <body>
     <div class="app-shell">
@@ -19,6 +19,15 @@
         <div class="document-title">
           <input id="document-title" value="未命名思维导图" aria-label="文档名称" />
           <span class="save-state">已保存</span>
+        </div>
+        <div class="search-box" id="search-box">
+          <div class="search-input-wrap">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="search-input" type="search" placeholder="搜索主题" autocomplete="off" aria-label="搜索思维导图主题" />
+          </div>
+          <button class="search-toggle" id="search-case-toggle" type="button" aria-pressed="false" title="区分大小写">Aa</button>
+          <button class="search-toggle" id="search-scope-toggle" type="button" aria-pressed="false" title="搜索范围">本页</button>
+          <div class="search-results" id="search-results" hidden></div>
         </div>
         <div class="top-actions">
           <button class="secondary-button" id="home-button" type="button" title="本地思维导图首页" aria-label="本地思维导图首页">
@@ -152,6 +161,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=28"></script>
+    <script src="./app.js?v=29"></script>
   </body>
 </html>

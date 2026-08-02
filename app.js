@@ -99,6 +99,14 @@ let currentLocalId = createLocalId();
 let autosaveDirty = true;
 let suppressAutosaveMark = false;
 let homeMode = "maps";
+let searchState = {
+  query: "",
+  caseSensitive: false,
+  scope: "current",
+  results: [],
+  active: null,
+  jumpArmed: false,
+};
 
 const viewport = document.querySelector("#canvas-viewport");
 const stage = document.querySelector("#mindmap-stage");
@@ -112,6 +120,10 @@ const exportButton = document.querySelector("#export-button");
 const exportMenu = document.querySelector("#export-menu");
 const copyButton = document.querySelector("#copy-button");
 const pasteButton = document.querySelector("#paste-button");
+const searchInput = document.querySelector("#search-input");
+const searchCaseToggle = document.querySelector("#search-case-toggle");
+const searchScopeToggle = document.querySelector("#search-scope-toggle");
+const searchResults = document.querySelector("#search-results");
 const openLocalButton = document.querySelector("#open-local-button");
 const saveButton = document.querySelector("#save-button");
 const homeButton = document.querySelector("#home-button");
@@ -256,6 +268,180 @@ function setSelection(ids, primaryId) {
   refreshSelectionClasses();
 }
 
+function searchText(value) {
+  return searchState.caseSensitive ? String(value || "") : String(value || "").toLocaleLowerCase();
+}
+
+function currentMapTitle() {
+  return document.querySelector("#document-title").value.trim() || "未命名思维导图";
+}
+
+function hasSearchMatch(text) {
+  const query = searchState.query.trim();
+  if (!query) return false;
+  return searchText(text).includes(searchText(query));
+}
+
+function appendHighlightedText(container, text) {
+  const value = String(text || "");
+  const query = searchState.query.trim();
+  if (!query || !hasSearchMatch(value)) {
+    container.textContent = value;
+    return;
+  }
+
+  const haystack = searchState.caseSensitive ? value : value.toLocaleLowerCase();
+  const needle = searchState.caseSensitive ? query : query.toLocaleLowerCase();
+  let cursor = 0;
+  let index = haystack.indexOf(needle);
+  while (index !== -1) {
+    if (index > cursor) container.append(document.createTextNode(value.slice(cursor, index)));
+    const mark = document.createElement("mark");
+    mark.className = "search-highlight";
+    mark.textContent = value.slice(index, index + query.length);
+    container.append(mark);
+    cursor = index + query.length;
+    index = haystack.indexOf(needle, cursor);
+  }
+  if (cursor < value.length) container.append(document.createTextNode(value.slice(cursor)));
+}
+
+function revealNodePath(id) {
+  let parentId = getNode(id)?.parentId;
+  while (parentId !== null && parentId !== undefined) {
+    const parent = getNode(parentId);
+    if (!parent) return;
+    parent.collapsed = false;
+    parentId = parent.parentId;
+  }
+}
+
+function centerOnNode(id) {
+  const node = getNode(id);
+  if (!node) return;
+  pan.x = -node.x * zoom;
+  pan.y = -node.y * zoom;
+  applyTransform();
+}
+
+function searchMaps() {
+  const maps = [{
+    id: currentLocalId,
+    title: currentMapTitle(),
+    nodes,
+    current: true,
+  }];
+
+  if (searchState.scope !== "all" || !localStorageAvailable()) return maps;
+
+  readActiveLocalIndex({ repair: true }).forEach((item) => {
+    if (!item?.id || item.id === currentLocalId) return;
+    const raw = localStorage.getItem(`${LOCAL_MAP_PREFIX}${item.id}`);
+    if (!raw) return;
+    try {
+      const data = normalizeProject(JSON.parse(raw));
+      maps.push({
+        id: item.id,
+        title: data.title || item.title || "未命名思维导图",
+        nodes: data.nodes,
+        current: false,
+      });
+    } catch {
+      // Ignore damaged local maps in search instead of blocking the current page.
+    }
+  });
+  return maps;
+}
+
+function updateSearchResults() {
+  const query = searchState.query.trim();
+  searchState.results = [];
+  if (!query) {
+    searchResults.hidden = true;
+    render();
+    return;
+  }
+
+  searchMaps().forEach((map) => {
+    map.nodes.forEach((node) => {
+      if (!hasSearchMatch(node.text)) return;
+      searchState.results.push({
+        key: `${map.id}:${node.id}`,
+        mapId: map.id,
+        mapTitle: map.title,
+        nodeId: node.id,
+        nodeText: node.text,
+        current: map.current,
+      });
+    });
+  });
+  renderSearchResults();
+  render();
+}
+
+function renderSearchResults() {
+  const count = searchState.results.length;
+  searchResults.replaceChildren();
+  searchResults.hidden = false;
+
+  const summary = document.createElement("div");
+  summary.className = "search-summary";
+  summary.textContent = `${searchState.scope === "all" ? "全部本地脑图" : "本页脑图"} · ${count} 个结果`;
+  searchResults.append(summary);
+
+  if (!count) {
+    const empty = document.createElement("div");
+    empty.className = "search-empty";
+    empty.textContent = "没有找到匹配主题";
+    searchResults.append(empty);
+    return;
+  }
+
+  searchState.results.slice(0, 80).forEach((result) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `search-result${searchState.active?.key === result.key ? " active" : ""}`;
+    item.dataset.key = result.key;
+
+    const topic = document.createElement("strong");
+    topic.textContent = result.nodeText || "未命名主题";
+    const map = document.createElement("span");
+    map.textContent = result.mapTitle;
+    const detail = document.createElement("small");
+    detail.textContent = result.current ? "当前脑图" : "本地保存脑图";
+    item.append(topic, map, detail);
+    searchResults.append(item);
+  });
+}
+
+function focusSearchMode() {
+  searchState.jumpArmed = false;
+  hintText.textContent = "查找模式";
+  searchInput.focus({ preventScroll: true });
+  searchInput.select();
+  if (searchState.query.trim()) renderSearchResults();
+}
+
+function jumpToSearchResult(key) {
+  const result = searchState.results.find((item) => item.key === key);
+  if (!result) return;
+  if (result.mapId !== currentLocalId) {
+    openLocalMap(result.mapId, { keepHomeOpen: true });
+  }
+  const node = getNode(result.nodeId);
+  if (!node) return;
+  revealNodePath(result.nodeId);
+  selectedId = result.nodeId;
+  selectedIds = new Set([result.nodeId]);
+  editingId = null;
+  searchState.active = { key: result.key, nodeId: result.nodeId, mapId: result.mapId };
+  searchState.jumpArmed = true;
+  render();
+  centerOnNode(result.nodeId);
+  hintText.textContent = "按任意键返回查找";
+  viewport.focus({ preventScroll: true });
+}
+
 function layoutMap() {
   const root = getNode("root");
   root.x = 0;
@@ -378,7 +564,8 @@ function render() {
     const element = document.createElement("div");
     const isSelected = selectedIds.has(node.id);
     const childCount = childrenOf(node.id).length;
-    element.className = `topic-node${node.id === "root" ? " root" : ""}${isSelected ? " selected" : ""}${node.id === selectedId && isSelected ? " primary" : ""}${node.id === editingId ? " editing" : ""}${animatingNodeIds.has(node.id) ? " creating" : ""}${node.collapsed ? " collapsed" : ""}`;
+    const searchHit = searchState.query.trim() && hasSearchMatch(node.text);
+    element.className = `topic-node${node.id === "root" ? " root" : ""}${isSelected ? " selected" : ""}${node.id === selectedId && isSelected ? " primary" : ""}${node.id === editingId ? " editing" : ""}${animatingNodeIds.has(node.id) ? " creating" : ""}${node.collapsed ? " collapsed" : ""}${searchHit ? " search-hit" : ""}`;
     element.dataset.id = node.id;
     element.style.left = `${node.x}px`;
     element.style.top = `${node.y}px`;
@@ -390,9 +577,13 @@ function render() {
 
     const label = document.createElement("span");
     label.className = "topic-label";
-    label.textContent = node.text;
     label.contentEditable = node.id === editingId ? "true" : "false";
     label.spellcheck = false;
+    if (node.id === editingId) {
+      label.textContent = node.text;
+    } else {
+      appendHighlightedText(label, node.text);
+    }
     element.append(label);
 
     if (isSelected && node.id === selectedId && node.id !== editingId) {
@@ -1746,6 +1937,46 @@ openFileInput.addEventListener("change", () => {
 });
 
 document.querySelector("#document-title").addEventListener("input", markSaving);
+document.addEventListener("keydown", (event) => {
+  if (!searchState.jumpArmed) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.target.matches("input, textarea, select, [contenteditable='true']")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  focusSearchMode();
+}, true);
+searchInput.addEventListener("input", () => {
+  searchState.query = searchInput.value;
+  searchState.active = null;
+  searchState.jumpArmed = false;
+  updateSearchResults();
+});
+searchInput.addEventListener("focus", () => {
+  if (searchState.query.trim()) renderSearchResults();
+});
+searchCaseToggle.addEventListener("click", () => {
+  searchState.caseSensitive = !searchState.caseSensitive;
+  searchCaseToggle.setAttribute("aria-pressed", String(searchState.caseSensitive));
+  updateSearchResults();
+  searchInput.focus({ preventScroll: true });
+});
+searchScopeToggle.addEventListener("click", () => {
+  searchState.scope = searchState.scope === "current" ? "all" : "current";
+  const all = searchState.scope === "all";
+  searchScopeToggle.textContent = all ? "全部" : "本页";
+  searchScopeToggle.setAttribute("aria-pressed", String(all));
+  updateSearchResults();
+  searchInput.focus({ preventScroll: true });
+});
+searchResults.addEventListener("click", (event) => {
+  const item = event.target.closest(".search-result");
+  if (!item) return;
+  jumpToSearchResult(item.dataset.key);
+});
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("#search-box")) return;
+  if (document.activeElement === searchInput) searchResults.hidden = true;
+});
 
 nodeDocumentEditor.addEventListener("input", () => syncActiveDocument());
 nodeDocumentEditor.addEventListener("paste", (event) => {
