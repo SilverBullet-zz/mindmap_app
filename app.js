@@ -3,6 +3,12 @@ const LOCAL_INDEX_KEY = "zhitu.localMaps.v1";
 const LOCAL_LAST_KEY = "zhitu.lastLocalMap.v1";
 const LOCAL_MAP_PREFIX = "zhitu.map.";
 const LOCAL_TRASH_KEY = "zhitu.trash.v1";
+const WORKSPACE_DB_NAME = "zhitu.workspace.v1";
+const WORKSPACE_STORE_NAME = "handles";
+const WORKSPACE_HANDLE_KEY = "working-directory";
+const WORKSPACE_NAME_KEY = "zhitu.workspaceName.v1";
+const WORKSPACE_WIDTH_KEY = "zhitu.workspaceWidth.v1";
+const WORKSPACE_COLLAPSED_KEY = "zhitu.workspaceCollapsed.v1";
 const AUTOSAVE_INTERVAL = 5000;
 const NODE_WIDTH_RULES = {
   root: { min: 300, max: 540, seed: 300, padding: 60, fontSize: 24, fontWeight: 750 },
@@ -99,6 +105,8 @@ let currentLocalId = createLocalId();
 let autosaveDirty = true;
 let suppressAutosaveMark = false;
 let homeMode = "maps";
+let workspaceDirectoryHandle = null;
+let workspaceResize = null;
 let searchState = {
   query: "",
   caseSensitive: false,
@@ -126,6 +134,13 @@ const searchScopeToggle = document.querySelector("#search-scope-toggle");
 const searchResults = document.querySelector("#search-results");
 const openLocalButton = document.querySelector("#open-local-button");
 const saveButton = document.querySelector("#save-button");
+const workspaceSidebar = document.querySelector("#workspace-sidebar");
+const workspaceCollapseButton = document.querySelector("#workspace-collapse");
+const workspaceResizer = document.querySelector("#workspace-resizer");
+const workspaceFolderName = document.querySelector("#workspace-folder-name");
+const workspaceFolderStatus = document.querySelector("#workspace-folder-status");
+const chooseWorkspaceFolderButton = document.querySelector("#choose-workspace-folder");
+const openWorkspaceFileButton = document.querySelector("#open-workspace-file");
 const homeButton = document.querySelector("#home-button");
 const homeOverlay = document.querySelector("#home-overlay");
 const homeList = document.querySelector("#home-list");
@@ -1148,6 +1163,129 @@ function localStorageAvailable() {
   }
 }
 
+function openWorkspaceDb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      resolve(null);
+      return;
+    }
+    const request = indexedDB.open(WORKSPACE_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(WORKSPACE_STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function readWorkspaceHandle() {
+  const db = await openWorkspaceDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    const transaction = db.transaction(WORKSPACE_STORE_NAME, "readonly");
+    const store = transaction.objectStore(WORKSPACE_STORE_NAME);
+    const request = store.get(WORKSPACE_HANDLE_KEY);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function writeWorkspaceHandle(handle) {
+  const db = await openWorkspaceDb();
+  if (!db) return;
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction(WORKSPACE_STORE_NAME, "readwrite");
+    transaction.objectStore(WORKSPACE_STORE_NAME).put(handle, WORKSPACE_HANDLE_KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function ensureWorkspacePermission(mode = "read") {
+  if (!workspaceDirectoryHandle) return false;
+  const options = { mode };
+  if ((await workspaceDirectoryHandle.queryPermission(options)) === "granted") return true;
+  return (await workspaceDirectoryHandle.requestPermission(options)) === "granted";
+}
+
+function updateWorkspaceUi() {
+  const savedName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_NAME_KEY) : "";
+  const supported = Boolean(window.showDirectoryPicker && window.showOpenFilePicker && window.showSaveFilePicker);
+  workspaceFolderName.textContent = workspaceDirectoryHandle?.name || savedName || "未选择文件夹";
+  workspaceFolderStatus.textContent = supported
+    ? workspaceDirectoryHandle ? "打开/保存默认使用此位置" : "选择后作为打开/保存默认位置"
+    : "当前浏览器不支持目录授权，使用普通文件选择";
+  const collapsed = localStorageAvailable() && localStorage.getItem(WORKSPACE_COLLAPSED_KEY) === "true";
+  workspaceSidebar.classList.toggle("collapsed", collapsed);
+  workspaceCollapseButton.title = collapsed ? "展开工作目录" : "收起工作目录";
+  workspaceCollapseButton.setAttribute("aria-label", workspaceCollapseButton.title);
+  const width = Number(localStorageAvailable() ? localStorage.getItem(WORKSPACE_WIDTH_KEY) : 0);
+  if (Number.isFinite(width) && width >= 190 && width <= 420) {
+    document.documentElement.style.setProperty("--workspace-sidebar-width", `${width}px`);
+  }
+}
+
+async function initializeWorkspaceDirectory() {
+  updateWorkspaceUi();
+  try {
+    workspaceDirectoryHandle = await readWorkspaceHandle();
+  } catch {
+    workspaceDirectoryHandle = null;
+  }
+  updateWorkspaceUi();
+}
+
+async function chooseWorkspaceDirectory() {
+  if (!window.showDirectoryPicker) {
+    showStatus("当前浏览器不支持选择工作目录", 2200);
+    return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({
+      id: "zhitu-working-directory",
+      mode: "readwrite",
+    });
+    workspaceDirectoryHandle = handle;
+    if (localStorageAvailable()) localStorage.setItem(WORKSPACE_NAME_KEY, handle.name);
+    await writeWorkspaceHandle(handle);
+    updateWorkspaceUi();
+    showStatus("工作目录已设置");
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      console.error(error);
+      showStatus("无法设置工作目录", 2200);
+    }
+  }
+}
+
+async function openProjectFromPicker() {
+  if (!window.showOpenFilePicker) {
+    openFileInput.click();
+    return;
+  }
+  try {
+    const options = {
+      id: "zhitu-open-folder",
+      multiple: false,
+      types: [{
+        description: "Mindmap 工程",
+        accept: { "application/json": [".mindmap.json", ".json"] },
+      }],
+    };
+    if (workspaceDirectoryHandle && await ensureWorkspacePermission("read")) {
+      options.startIn = workspaceDirectoryHandle;
+    }
+    const [handle] = await window.showOpenFilePicker(options);
+    if (!handle) return;
+    await openProject(await handle.getFile());
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      console.error(error);
+      openFileInput.click();
+    }
+  }
+}
+
 function readLocalIndex() {
   try {
     const index = JSON.parse(localStorage.getItem(LOCAL_INDEX_KEY) || "[]");
@@ -1871,7 +2009,7 @@ document.addEventListener("keydown", (event) => {
     saveProject();
   } else if (key === "o") {
     event.preventDefault();
-    openFileInput.click();
+    openProjectFromPicker();
   } else if (key === "c" && !editingText) {
     event.preventDefault();
     copySelectedSubtree();
@@ -1905,7 +2043,44 @@ document.querySelector("#fit-button").addEventListener("click", fitCanvas);
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 saveButton.addEventListener("click", saveProject);
-openLocalButton.addEventListener("click", () => openFileInput.click());
+openLocalButton.addEventListener("click", openProjectFromPicker);
+chooseWorkspaceFolderButton.addEventListener("click", chooseWorkspaceDirectory);
+openWorkspaceFileButton.addEventListener("click", openProjectFromPicker);
+workspaceCollapseButton.addEventListener("click", () => {
+  const collapsed = !workspaceSidebar.classList.contains("collapsed");
+  if (localStorageAvailable()) localStorage.setItem(WORKSPACE_COLLAPSED_KEY, String(collapsed));
+  updateWorkspaceUi();
+});
+workspaceResizer.addEventListener("pointerdown", (event) => {
+  if (workspaceSidebar.classList.contains("collapsed")) return;
+  event.preventDefault();
+  workspaceResize = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startWidth: workspaceSidebar.getBoundingClientRect().width,
+  };
+  workspaceSidebar.classList.add("resizing");
+  workspaceResizer.setPointerCapture(event.pointerId);
+});
+workspaceResizer.addEventListener("pointermove", (event) => {
+  if (!workspaceResize || workspaceResize.pointerId !== event.pointerId) return;
+  const nextWidth = clamp(workspaceResize.startWidth + event.clientX - workspaceResize.startX, 190, 420);
+  document.documentElement.style.setProperty("--workspace-sidebar-width", `${nextWidth}px`);
+});
+workspaceResizer.addEventListener("pointerup", (event) => {
+  if (!workspaceResize || workspaceResize.pointerId !== event.pointerId) return;
+  const width = Math.round(workspaceSidebar.getBoundingClientRect().width);
+  if (localStorageAvailable()) localStorage.setItem(WORKSPACE_WIDTH_KEY, String(width));
+  workspaceResize = null;
+  workspaceSidebar.classList.remove("resizing");
+  if (workspaceResizer.hasPointerCapture(event.pointerId)) workspaceResizer.releasePointerCapture(event.pointerId);
+});
+workspaceResizer.addEventListener("pointercancel", (event) => {
+  if (!workspaceResize || workspaceResize.pointerId !== event.pointerId) return;
+  workspaceResize = null;
+  workspaceSidebar.classList.remove("resizing");
+  if (workspaceResizer.hasPointerCapture(event.pointerId)) workspaceResizer.releasePointerCapture(event.pointerId);
+});
 homeButton.addEventListener("click", openHome);
 closeHomeButton.addEventListener("click", closeHome);
 newLocalMapButton.addEventListener("click", () => newLocalMap());
@@ -2323,11 +2498,15 @@ async function saveBlobToFile(blob, filename, typeInfo) {
     return true;
   }
   try {
-    const handle = await window.showSaveFilePicker({
+    const options = {
       id: "zhitu-save-folder",
       suggestedName: filename,
       types: typeInfo ? [typeInfo] : undefined,
-    });
+    };
+    if (workspaceDirectoryHandle && await ensureWorkspacePermission("readwrite")) {
+      options.startIn = workspaceDirectoryHandle;
+    }
+    const handle = await window.showSaveFilePicker(options);
     const writable = await handle.createWritable();
     await writable.write(blob);
     await writable.close();
@@ -2491,6 +2670,7 @@ window.setInterval(() => {
   if (autosaveDirty) autosaveLocal();
 }, AUTOSAVE_INTERVAL);
 
+initializeWorkspaceDirectory();
 restoreLastLocalMap();
 renderHomeList();
 render();

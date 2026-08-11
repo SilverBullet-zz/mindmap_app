@@ -97,6 +97,28 @@
           </button>
         </aside>
 
+        <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="工作目录">
+          <button class="workspace-collapse" id="workspace-collapse" type="button" title="收起工作目录" aria-label="收起工作目录"></button>
+          <div class="workspace-sidebar-content">
+            <div class="workspace-sidebar-header">
+              <span class="workspace-kicker">Working Folder</span>
+              <strong>工作目录</strong>
+            </div>
+            <div class="workspace-folder-card">
+              <span class="folder-icon workspace-folder-icon" aria-hidden="true"></span>
+              <div>
+                <span id="workspace-folder-name">未选择文件夹</span>
+                <small id="workspace-folder-status">保存和打开会先使用这里</small>
+              </div>
+            </div>
+            <div class="workspace-sidebar-actions">
+              <button class="secondary-button" id="choose-workspace-folder" type="button">选择文件夹</button>
+              <button class="secondary-button" id="open-workspace-file" type="button">打开文件</button>
+            </div>
+          </div>
+          <div class="workspace-resizer" id="workspace-resizer" role="separator" aria-orientation="vertical" aria-label="调整工作目录栏宽度"></div>
+        </aside>
+
         <main class="canvas-viewport" id="canvas-viewport" tabindex="0" aria-label="思维导图画布">
           <div class="canvas-grid"></div>
           <div class="selection-marquee" id="selection-marquee" hidden></div>
@@ -161,6 +183,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=29"></script>
+    <script src="./app.js?v=30"></script>
   </body>
 </html>
