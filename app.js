@@ -9,6 +9,7 @@ const WORKSPACE_HANDLE_KEY = "working-directory";
 const WORKSPACE_NAME_KEY = "zhitu.workspaceName.v1";
 const WORKSPACE_WIDTH_KEY = "zhitu.workspaceWidth.v1";
 const WORKSPACE_COLLAPSED_KEY = "zhitu.workspaceCollapsed.v1";
+const WORKSPACE_FILE_EXTENSIONS = [".mindmap.json", ".json"];
 const AUTOSAVE_INTERVAL = 5000;
 const NODE_WIDTH_RULES = {
   root: { min: 300, max: 540, seed: 300, padding: 60, fontSize: 24, fontWeight: 750 },
@@ -107,6 +108,8 @@ let suppressAutosaveMark = false;
 let homeMode = "maps";
 let workspaceDirectoryHandle = null;
 let workspaceResize = null;
+let workspaceFiles = [];
+let mapReturnStack = [];
 let searchState = {
   query: "",
   caseSensitive: false,
@@ -141,6 +144,9 @@ const workspaceFolderName = document.querySelector("#workspace-folder-name");
 const workspaceFolderStatus = document.querySelector("#workspace-folder-status");
 const chooseWorkspaceFolderButton = document.querySelector("#choose-workspace-folder");
 const openWorkspaceFileButton = document.querySelector("#open-workspace-file");
+const refreshWorkspaceFilesButton = document.querySelector("#refresh-workspace-files");
+const workspaceFileList = document.querySelector("#workspace-file-list");
+const mapReturnButton = document.querySelector("#map-return-button");
 const homeButton = document.querySelector("#home-button");
 const homeOverlay = document.querySelector("#home-overlay");
 const homeList = document.querySelector("#home-list");
@@ -289,6 +295,41 @@ function searchText(value) {
 
 function currentMapTitle() {
   return document.querySelector("#document-title").value.trim() || "未命名思维导图";
+}
+
+function currentMapSnapshot({ focusNodeId = selectedId } = {}) {
+  return {
+    data: normalizeProject(projectData()),
+    localId: currentLocalId,
+    selectedId: getNode(focusNodeId) ? focusNodeId : selectedId,
+    selectedIds: getNode(focusNodeId) ? [focusNodeId] : [...selectedIds],
+    zoom,
+    pan: { ...pan },
+  };
+}
+
+function restoreMapSnapshot(snapshot) {
+  if (!snapshot?.data) return;
+  applyProjectData(snapshot.data, {
+    localId: snapshot.localId || currentLocalId,
+    status: "已返回链接前位置",
+    markDirty: false,
+    selectedNodeId: snapshot.selectedId || "root",
+    selectedNodeIds: snapshot.selectedIds || [snapshot.selectedId || "root"],
+    view: {
+      zoom: Number.isFinite(snapshot.zoom) ? snapshot.zoom : snapshot.data.view.zoom,
+      pan: snapshot.pan || snapshot.data.view.pan,
+    },
+  });
+}
+
+function updateMapReturnButton() {
+  if (!mapReturnButton) return;
+  mapReturnButton.hidden = mapReturnStack.length === 0;
+}
+
+function isLinkedNode(node) {
+  return Boolean(node?.mapLink?.name || node?.mapLink?.fileName);
 }
 
 function hasSearchMatch(text) {
@@ -580,7 +621,8 @@ function render() {
     const isSelected = selectedIds.has(node.id);
     const childCount = childrenOf(node.id).length;
     const searchHit = searchState.query.trim() && hasSearchMatch(node.text);
-    element.className = `topic-node${node.id === "root" ? " root" : ""}${isSelected ? " selected" : ""}${node.id === selectedId && isSelected ? " primary" : ""}${node.id === editingId ? " editing" : ""}${animatingNodeIds.has(node.id) ? " creating" : ""}${node.collapsed ? " collapsed" : ""}${searchHit ? " search-hit" : ""}`;
+    const linked = isLinkedNode(node);
+    element.className = `topic-node${node.id === "root" ? " root" : ""}${isSelected ? " selected" : ""}${node.id === selectedId && isSelected ? " primary" : ""}${node.id === editingId ? " editing" : ""}${animatingNodeIds.has(node.id) ? " creating" : ""}${node.collapsed ? " collapsed" : ""}${searchHit ? " search-hit" : ""}${linked ? " linked" : ""}`;
     element.dataset.id = node.id;
     element.style.left = `${node.x}px`;
     element.style.top = `${node.y}px`;
@@ -589,6 +631,7 @@ function render() {
     element.setAttribute("role", "button");
     element.setAttribute("aria-label", node.text);
     element.setAttribute("aria-selected", isSelected ? "true" : "false");
+    if (linked) element.title = `Ctrl+点击打开：${node.mapLink.name || node.mapLink.fileName}`;
 
     const label = document.createElement("span");
     label.className = "topic-label";
@@ -600,6 +643,14 @@ function render() {
       appendHighlightedText(label, node.text);
     }
     element.append(label);
+
+    if (linked && node.id !== editingId) {
+      const linkBadge = document.createElement("span");
+      linkBadge.className = "map-link-badge";
+      linkBadge.setAttribute("aria-hidden", "true");
+      linkBadge.textContent = "↗";
+      element.append(linkBadge);
+    }
 
     if (isSelected && node.id === selectedId && node.id !== editingId) {
       const leftHandle = document.createElement("span");
@@ -1139,7 +1190,7 @@ function projectData() {
       zoom,
       pan: { ...pan },
     },
-    nodes: nodes.map(({ id, parentId, text, side, color, collapsed, width, document }) => ({
+    nodes: nodes.map(({ id, parentId, text, side, color, collapsed, width, document, mapLink }) => ({
       id,
       parentId,
       text,
@@ -1148,6 +1199,10 @@ function projectData() {
       collapsed: Boolean(collapsed),
       width: Number.isFinite(Number(width)) ? Number(width) : undefined,
       document: typeof document === "string" ? document : undefined,
+      mapLink: mapLink?.fileName || mapLink?.name ? {
+        fileName: String(mapLink.fileName || mapLink.name || "").slice(0, 260),
+        name: String(mapLink.name || mapLink.fileName || "").slice(0, 260),
+      } : undefined,
     })),
   };
 }
@@ -1223,6 +1278,7 @@ function updateWorkspaceUi() {
   if (Number.isFinite(width) && width >= 190 && width <= 420) {
     document.documentElement.style.setProperty("--workspace-sidebar-width", `${width}px`);
   }
+  renderWorkspaceFiles();
 }
 
 async function initializeWorkspaceDirectory() {
@@ -1233,6 +1289,7 @@ async function initializeWorkspaceDirectory() {
     workspaceDirectoryHandle = null;
   }
   updateWorkspaceUi();
+  refreshWorkspaceFiles();
 }
 
 async function chooseWorkspaceDirectory() {
@@ -1249,6 +1306,7 @@ async function chooseWorkspaceDirectory() {
     if (localStorageAvailable()) localStorage.setItem(WORKSPACE_NAME_KEY, handle.name);
     await writeWorkspaceHandle(handle);
     updateWorkspaceUi();
+    await refreshWorkspaceFiles();
     showStatus("工作目录已设置");
   } catch (error) {
     if (error?.name !== "AbortError") {
@@ -1256,6 +1314,131 @@ async function chooseWorkspaceDirectory() {
       showStatus("无法设置工作目录", 2200);
     }
   }
+}
+
+function isMindmapFileName(name) {
+  const lower = String(name || "").toLocaleLowerCase();
+  return WORKSPACE_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension));
+}
+
+function renderWorkspaceFiles() {
+  if (!workspaceFileList) return;
+  workspaceFileList.replaceChildren();
+  if (!workspaceDirectoryHandle) {
+    const empty = document.createElement("div");
+    empty.className = "workspace-file-empty";
+    empty.textContent = "选择工作目录后显示其中的 mindmap 文件";
+    workspaceFileList.append(empty);
+    return;
+  }
+  if (!workspaceFiles.length) {
+    const empty = document.createElement("div");
+    empty.className = "workspace-file-empty";
+    empty.textContent = "没有找到 .mindmap.json 文件";
+    workspaceFileList.append(empty);
+    return;
+  }
+  workspaceFiles.forEach((file) => {
+    const item = document.createElement("div");
+    item.className = "workspace-file-item";
+    item.dataset.name = file.name;
+
+    const name = document.createElement("button");
+    name.type = "button";
+    name.className = "workspace-file-name";
+    name.dataset.action = "open";
+    name.title = file.name;
+    name.textContent = file.name;
+
+    const actions = document.createElement("div");
+    actions.className = "workspace-file-actions";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "text-button";
+    open.dataset.action = "open";
+    open.textContent = "打开";
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "text-button";
+    link.dataset.action = "link";
+    link.textContent = "链接";
+    actions.append(open, link);
+    item.append(name, actions);
+    workspaceFileList.append(item);
+  });
+}
+
+async function refreshWorkspaceFiles() {
+  workspaceFiles = [];
+  if (!workspaceDirectoryHandle) {
+    renderWorkspaceFiles();
+    return;
+  }
+  try {
+    if (!await ensureWorkspacePermission("read")) {
+      renderWorkspaceFiles();
+      showStatus("需要授权工作目录", 2200);
+      return;
+    }
+    for await (const [name, handle] of workspaceDirectoryHandle.entries()) {
+      if (handle.kind !== "file" || !isMindmapFileName(name)) continue;
+      workspaceFiles.push({ name, handle });
+    }
+    workspaceFiles.sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
+    renderWorkspaceFiles();
+  } catch (error) {
+    console.error(error);
+    renderWorkspaceFiles();
+    showStatus("无法读取工作目录文件", 2200);
+  }
+}
+
+function workspaceFileByName(name) {
+  return workspaceFiles.find((file) => file.name === name);
+}
+
+async function openWorkspaceMapFile(name, { fromLinkNodeId = null } = {}) {
+  let entry = workspaceFileByName(name);
+  if (!entry) {
+    await refreshWorkspaceFiles();
+    entry = workspaceFileByName(name);
+  }
+  if (!entry) {
+    showStatus("工作目录中找不到链接文件", 2400);
+    return false;
+  }
+  try {
+    if (fromLinkNodeId) mapReturnStack.push(currentMapSnapshot({ focusNodeId: fromLinkNodeId }));
+    const opened = await openProject(await entry.handle.getFile(), {
+      status: fromLinkNodeId ? `已打开链接：${name}` : "工作目录文件已打开",
+      keepReturnStack: Boolean(fromLinkNodeId),
+    });
+    if (!opened && fromLinkNodeId) mapReturnStack.pop();
+    updateMapReturnButton();
+    return opened;
+  } catch (error) {
+    if (fromLinkNodeId) mapReturnStack.pop();
+    console.error(error);
+    showStatus("无法打开此链接文件", 2200);
+    updateMapReturnButton();
+    return false;
+  }
+}
+
+function linkSelectedNodeToWorkspaceFile(name) {
+  const node = getNode(selectedId);
+  if (!node) return;
+  pushHistory();
+  node.mapLink = { fileName: name, name };
+  render();
+  showStatus(`已将“${node.text || "主题"}”链接到 ${name}`, 2200);
+}
+
+async function followNodeMapLink(id) {
+  const node = getNode(id);
+  if (!isLinkedNode(node)) return false;
+  const name = node.mapLink.fileName || node.mapLink.name;
+  return openWorkspaceMapFile(name, { fromLinkNodeId: id });
 }
 
 async function openProjectFromPicker() {
@@ -1408,6 +1591,10 @@ function normalizeProject(data) {
       collapsed: Boolean(node.collapsed),
       width: Number.isFinite(Number(node.width)) ? clamp(Math.round(Number(node.width)), nodeWidthLimits({ id: node.id === "root" ? "root" : "branch" }).min, nodeWidthLimits({ id: node.id === "root" ? "root" : "branch" }).max) : undefined,
       document: typeof node.document === "string" ? node.document.slice(0, 200000) : undefined,
+      mapLink: node.mapLink && typeof node.mapLink === "object" ? {
+        fileName: String(node.mapLink.fileName || node.mapLink.name || "").slice(0, 260),
+        name: String(node.mapLink.name || node.mapLink.fileName || "").slice(0, 260),
+      } : undefined,
       x: 0,
       y: 0,
     };
@@ -1448,10 +1635,21 @@ function normalizeProject(data) {
   };
 }
 
-function applyProjectData(data, { localId = currentLocalId, status = "工程已打开", markDirty = false } = {}) {
+function applyProjectData(
+  data,
+  {
+    localId = currentLocalId,
+    status = "工程已打开",
+    markDirty = false,
+    selectedNodeId = "root",
+    selectedNodeIds = [selectedNodeId],
+    view = data.view,
+  } = {}
+) {
   nodes = data.nodes;
-  selectedId = "root";
-  selectedIds = new Set(["root"]);
+  const validSelectedIds = selectedNodeIds.filter((id) => data.nodes.some((node) => node.id === id));
+  selectedId = data.nodes.some((node) => node.id === selectedNodeId) ? selectedNodeId : validSelectedIds[0] || "root";
+  selectedIds = new Set(validSelectedIds.length ? validSelectedIds : [selectedId]);
   editingId = null;
   activeDocumentId = null;
   if (nodeDocumentOverlay) nodeDocumentOverlay.hidden = true;
@@ -1462,8 +1660,8 @@ function applyProjectData(data, { localId = currentLocalId, status = "工程已�
     1,
     ...nodes.map((node) => Number(node.id.match(/^n(\d+)$/)?.[1] || 0))
   ) + 1;
-  zoom = data.view.zoom;
-  pan = data.view.pan;
+  zoom = view?.zoom ?? data.view.zoom;
+  pan = view?.pan ?? data.view.pan;
   currentLocalId = localId;
   document.querySelector("#document-title").value = data.title;
   updateHistoryButtons();
@@ -1475,14 +1673,21 @@ function applyProjectData(data, { localId = currentLocalId, status = "工程已�
   viewport.focus({ preventScroll: true });
 }
 
-async function openProject(file) {
+async function openProject(
+  file,
+  { status = "工程已打开", localId = createLocalId(), markDirty = true, keepReturnStack = false } = {}
+) {
   try {
+    if (!keepReturnStack) mapReturnStack = [];
     const data = normalizeProject(JSON.parse(await file.text()));
-    applyProjectData(data, { localId: createLocalId(), status: "工程已打开", markDirty: true });
+    applyProjectData(data, { localId, status, markDirty });
     autosaveLocal();
+    updateMapReturnButton();
+    return true;
   } catch (error) {
     console.error(error);
     showStatus("无法打开此工程", 2200);
+    return false;
   } finally {
     openFileInput.value = "";
   }
@@ -1577,12 +1782,14 @@ function closeHome() {
 
 function openLocalMap(id, { keepHomeOpen = false } = {}) {
   try {
+    mapReturnStack = [];
     const raw = localStorage.getItem(`${LOCAL_MAP_PREFIX}${id}`);
     if (!raw) throw new Error("本地文件不存在");
     const data = normalizeProject(JSON.parse(raw));
     applyProjectData(data, { localId: id, status: "本地思维导图已打开" });
     localStorage.setItem(LOCAL_LAST_KEY, id);
     autosaveDirty = false;
+    updateMapReturnButton();
     if (!keepHomeOpen) closeHome();
   } catch (error) {
     console.error(error);
@@ -1680,12 +1887,14 @@ function purgeLocalMap(id) {
 
 function newLocalMap({ keepHomeOpen = false } = {}) {
   homeMode = "maps";
+  mapReturnStack = [];
   applyProjectData({
     title: "未命名思维导图",
     nodes: createDefaultNodes(),
     view: { zoom: 1, pan: { x: 0, y: 0 } },
   }, { localId: createLocalId(), status: "已新建本地思维导图", markDirty: true });
   autosaveLocal();
+  updateMapReturnButton();
   if (!keepHomeOpen) closeHome();
   renderHomeList();
 }
@@ -1708,7 +1917,7 @@ function restoreLastLocalMap() {
   }
 }
 
-nodesLayer.addEventListener("click", (event) => {
+nodesLayer.addEventListener("click", async (event) => {
   if (suppressNextClick) return;
   const foldButton = event.target.closest(".fold-toggle");
   if (foldButton) {
@@ -1719,6 +1928,11 @@ nodesLayer.addEventListener("click", (event) => {
   }
   const element = event.target.closest(".topic-node");
   if (!element || editingId) return;
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault();
+    await followNodeMapLink(element.dataset.id);
+    return;
+  }
   if (event.detail >= 2) {
     event.preventDefault();
     beginEditing(element.dataset.id);
@@ -1866,6 +2080,7 @@ nodesLayer.addEventListener("pointerdown", (event) => {
   if (event.target.closest(".fold-toggle")) return;
   const element = event.target.closest(".topic-node");
   if (!element || editingId || event.button !== 0) return;
+  if (event.ctrlKey || event.metaKey) return;
   const clickedId = element.dataset.id;
   if (!selectedIds.has(clickedId)) setSelection([clickedId], clickedId);
   if (clickedId === "root") return;
@@ -2046,6 +2261,23 @@ saveButton.addEventListener("click", saveProject);
 openLocalButton.addEventListener("click", openProjectFromPicker);
 chooseWorkspaceFolderButton.addEventListener("click", chooseWorkspaceDirectory);
 openWorkspaceFileButton.addEventListener("click", openProjectFromPicker);
+refreshWorkspaceFilesButton.addEventListener("click", () => refreshWorkspaceFiles());
+workspaceFileList.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  const item = event.target.closest(".workspace-file-item");
+  if (!action || !item) return;
+  if (action === "open") {
+    mapReturnStack = [];
+    openWorkspaceMapFile(item.dataset.name);
+  } else if (action === "link") {
+    linkSelectedNodeToWorkspaceFile(item.dataset.name);
+  }
+});
+mapReturnButton.addEventListener("click", () => {
+  const snapshot = mapReturnStack.pop();
+  restoreMapSnapshot(snapshot);
+  updateMapReturnButton();
+});
 workspaceCollapseButton.addEventListener("click", () => {
   const collapsed = !workspaceSidebar.classList.contains("collapsed");
   if (localStorageAvailable()) localStorage.setItem(WORKSPACE_COLLAPSED_KEY, String(collapsed));

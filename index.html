@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#eefbf3" />
     <title>枝图 - 思维导图</title>
-    <link rel="stylesheet" href="./styles.css?v=29" />
+    <link rel="stylesheet" href="./styles.css?v=30" />
   </head>
   <body>
     <div class="app-shell">
@@ -115,6 +115,13 @@
               <button class="secondary-button" id="choose-workspace-folder" type="button">选择文件夹</button>
               <button class="secondary-button" id="open-workspace-file" type="button">打开文件</button>
             </div>
+            <div class="workspace-file-section">
+              <div class="workspace-file-header">
+                <span>文件</span>
+                <button class="text-button" id="refresh-workspace-files" type="button">刷新</button>
+              </div>
+              <div class="workspace-file-list" id="workspace-file-list"></div>
+            </div>
           </div>
           <div class="workspace-resizer" id="workspace-resizer" role="separator" aria-orientation="vertical" aria-label="调整工作目录栏宽度"></div>
         </aside>
@@ -141,6 +148,10 @@
               <span class="fit-icon" aria-hidden="true"></span>
             </button>
           </div>
+
+          <button class="map-return-button" id="map-return-button" type="button" hidden>
+            返回链接前位置
+          </button>
         </main>
       </div>
 
@@ -183,6 +194,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=30"></script>
+    <script src="./app.js?v=31"></script>
   </body>
 </html>

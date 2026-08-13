@@ -718,6 +718,83 @@ button {
   width: 100%;
 }
 
+.workspace-file-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #4d675d;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.workspace-file-list {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  max-height: min(42vh, 360px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.workspace-file-empty {
+  padding: 10px;
+  border: 1px dashed #c9e5d8;
+  border-radius: 8px;
+  color: #728279;
+  font-size: 12px;
+  line-height: 1.45;
+  background: rgba(247, 255, 251, 0.72);
+}
+
+.workspace-file-item {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #d8ece2;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.workspace-file-item:hover {
+  border-color: #a9dccd;
+  background: #fbfffd;
+}
+
+.workspace-file-name {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #26352e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.workspace-file-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.workspace-file-actions .text-button,
+.workspace-file-header .text-button {
+  padding: 0;
+  font-size: 11px;
+}
+
 .workspace-resizer {
   position: absolute;
   top: 0;
@@ -1031,6 +1108,27 @@ button {
 
 .topic-node.selected.primary {
   box-shadow: 0 0 0 3px rgba(72, 185, 166, 0.28), 0 7px 18px rgba(42, 104, 83, 0.16);
+}
+
+.topic-node.linked {
+  border-style: solid;
+}
+
+.map-link-badge {
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #327d70;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(42, 104, 83, 0.12);
 }
 
 .topic-node.selected::after {
@@ -1515,6 +1613,31 @@ button {
 
 .markdown-preview p {
   margin: 0 0 1em;
+}
+
+.map-return-button {
+  position: absolute;
+  right: 22px;
+  top: 76px;
+  z-index: 18;
+  padding: 9px 14px;
+  border: 1px solid #acdccc;
+  border-radius: 8px;
+  background: rgba(251, 255, 253, 0.95);
+  color: #286e62;
+  font-size: 13px;
+  font-weight: 750;
+  box-shadow: 0 10px 24px rgba(44, 87, 66, 0.13);
+  cursor: pointer;
+}
+
+.map-return-button:hover {
+  border-color: #78cbbb;
+  background: #f1fff8;
+}
+
+.map-return-button[hidden] {
+  display: none;
 }
 
 .markdown-preview a {
