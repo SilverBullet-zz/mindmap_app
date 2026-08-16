@@ -11,6 +11,7 @@ const WORKSPACE_WIDTH_KEY = "zhitu.workspaceWidth.v1";
 const WORKSPACE_COLLAPSED_KEY = "zhitu.workspaceCollapsed.v1";
 const WORKSPACE_FILE_EXTENSIONS = [".mindmap.json", ".json"];
 const AUTOSAVE_INTERVAL = 5000;
+const DEFAULT_DOCUMENT_TITLE = "未命名思维导图";
 const NODE_WIDTH_RULES = {
   root: { min: 300, max: 540, seed: 300, padding: 60, fontSize: 24, fontWeight: 750 },
   branch: { min: 220, max: 420, seed: 220, padding: 54, fontSize: 16, fontWeight: 650 },
@@ -110,6 +111,8 @@ let workspaceDirectoryHandle = null;
 let workspaceResize = null;
 let workspaceFiles = [];
 let mapReturnStack = [];
+let titleEditedByUser = false;
+let nodeLinkMenu = null;
 let searchState = {
   query: "",
   caseSensitive: false,
@@ -135,6 +138,7 @@ const searchInput = document.querySelector("#search-input");
 const searchCaseToggle = document.querySelector("#search-case-toggle");
 const searchScopeToggle = document.querySelector("#search-scope-toggle");
 const searchResults = document.querySelector("#search-results");
+const documentTitleInput = document.querySelector("#document-title");
 const openLocalButton = document.querySelector("#open-local-button");
 const saveButton = document.querySelector("#save-button");
 const workspaceSidebar = document.querySelector("#workspace-sidebar");
@@ -294,7 +298,24 @@ function searchText(value) {
 }
 
 function currentMapTitle() {
-  return document.querySelector("#document-title").value.trim() || "未命名思维导图";
+  return documentTitleInput.value.trim() || getNode("root")?.text?.trim() || DEFAULT_DOCUMENT_TITLE;
+}
+
+function rootTopicTitle() {
+  return getNode("root")?.text?.trim() || "主题";
+}
+
+function shouldUseRootTitle(value = documentTitleInput.value) {
+  const title = String(value || "").trim();
+  return !title || title === DEFAULT_DOCUMENT_TITLE || title === "主题";
+}
+
+function syncDocumentTitleFromRoot({ force = false } = {}) {
+  if (!documentTitleInput) return;
+  if (!force && titleEditedByUser && !shouldUseRootTitle()) return;
+  if (force || shouldUseRootTitle()) {
+    documentTitleInput.value = rootTopicTitle();
+  }
 }
 
 function currentMapSnapshot({ focusNodeId = selectedId } = {}) {
@@ -321,6 +342,10 @@ function restoreMapSnapshot(snapshot) {
       pan: snapshot.pan || snapshot.data.view.pan,
     },
   });
+  revealNodePath(snapshot.selectedId || "root");
+  render();
+  centerOnNode(snapshot.selectedId || "root");
+  autosaveDirty = false;
 }
 
 function updateMapReturnButton() {
@@ -330,6 +355,45 @@ function updateMapReturnButton() {
 
 function isLinkedNode(node) {
   return Boolean(node?.mapLink?.name || node?.mapLink?.fileName);
+}
+
+function branchRootFor(node) {
+  if (!node || node.id === "root") return null;
+  let current = node;
+  let parent = getNode(current.parentId);
+  while (parent && parent.id !== "root") {
+    current = parent;
+    parent = getNode(current.parentId);
+  }
+  return current;
+}
+
+function branchColorFor(node) {
+  return branchRootFor(node)?.color || node?.color || palette[0];
+}
+
+function ensureBranchColors() {
+  nodes.forEach((node) => {
+    if (node.id === "root") return;
+    node.color = branchColorFor(node);
+  });
+}
+
+function hexToRgb(hex) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+  if (!match) return { r: 140, g: 168, b: 204 };
+  const value = Number.parseInt(match[1], 16);
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255,
+  };
+}
+
+function contrastStrokeColor(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance > 0.72 ? "rgba(42, 77, 63, 0.38)" : "rgba(255, 255, 255, 0.78)";
 }
 
 function hasSearchMatch(text) {
@@ -502,9 +566,10 @@ function layoutMap() {
   const root = getNode("root");
   root.x = 0;
   root.y = 0;
-  const horizontalGap = 118;
-  const branchGap = 44;
-  const childGap = 32;
+  ensureBranchColors();
+  const horizontalGap = 132;
+  const branchGap = 64;
+  const childGap = 48;
   const measureContext = document.createElement("canvas").getContext("2d");
 
   const estimateTextWidth = (text, font) => {
@@ -515,20 +580,25 @@ function layoutMap() {
   const estimateLineCount = (node, maxTextWidth) => {
     const limits = nodeWidthLimits(node);
     const font = `${limits.fontWeight} ${limits.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
-    const tokens = String(node.text || "未命名主题").match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+|\s+/gu) || [node.text || ""];
-    let line = "";
-    let lines = 1;
-    tokens.forEach((token) => {
-      if (/^\s+$/.test(token) && !line) return;
-      const candidate = line + token;
-      if (line && estimateTextWidth(candidate, font) > maxTextWidth) {
-        lines += 1;
-        line = token.trimStart();
-      } else {
-        line = candidate;
-      }
-    });
-    return lines;
+    return String(node.text || "未命名主题")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .reduce((total, paragraph) => {
+        const tokens = paragraph.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+|\s+/gu) || [paragraph || ""];
+        let line = "";
+        let lines = 1;
+        tokens.forEach((token) => {
+          if (/^\s+$/.test(token) && !line) return;
+          const candidate = line + token;
+          if (line && estimateTextWidth(candidate, font) > maxTextWidth) {
+            lines += 1;
+            line = token.trimStart();
+          } else {
+            line = candidate;
+          }
+        });
+        return total + lines;
+      }, 0);
   };
 
   nodes.forEach((node) => resolveNodeWidth(node, measureContext));
@@ -537,8 +607,8 @@ function layoutMap() {
     const limits = nodeWidthLimits(node);
     const minHeight = node.id === "root" ? 86 : 56;
     const horizontalPadding = limits.padding;
-    const verticalPadding = node.id === "root" ? 26 : 24;
-    const lineHeight = limits.fontSize * 1.38;
+    const verticalPadding = node.id === "root" ? 32 : 30;
+    const lineHeight = limits.fontSize * 1.42;
     const widthForWrap = clamp(node.width || limits.seed, limits.min, limits.max) - horizontalPadding;
     return Math.max(minHeight, estimateLineCount(node, widthForWrap) * lineHeight + verticalPadding);
   };
@@ -725,14 +795,17 @@ function drawConnections() {
     const endX = node.x - direction * nodeWidth / 2;
     const bend = Math.max(44, Math.abs(endX - startX) * 0.52);
 
+    const d = `M ${startX + 3000} ${parent.y + 3000} C ${startX + direction * bend + 3000} ${parent.y + 3000}, ${endX - direction * bend + 3000} ${node.y + 3000}, ${endX + 3000} ${node.y + 3000}`;
+    const strokeColor = node.color === "#ffffff" ? "#8ea8cc" : node.color;
+    const outline = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    outline.setAttribute("class", "connection-outline");
+    outline.setAttribute("stroke", contrastStrokeColor(strokeColor));
+    outline.setAttribute("d", d);
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("class", "connection");
-    path.setAttribute("stroke", node.color === "#ffffff" ? "#8ea8cc" : node.color);
-    path.setAttribute(
-      "d",
-      `M ${startX + 3000} ${parent.y + 3000} C ${startX + direction * bend + 3000} ${parent.y + 3000}, ${endX - direction * bend + 3000} ${node.y + 3000}, ${endX + 3000} ${node.y + 3000}`
-    );
-    connections.append(path);
+    path.setAttribute("stroke", strokeColor);
+    path.setAttribute("d", d);
+    connections.append(outline, path);
   });
 }
 
@@ -981,6 +1054,7 @@ function insertEditingLineBreak() {
 
 function finishEditing() {
   if (!editingId) return;
+  const finishedId = editingId;
   syncEditingText();
   const node = getNode(editingId);
   if (node.text !== editSnapshot) {
@@ -988,6 +1062,9 @@ function finishEditing() {
     future = [];
     updateHistoryButtons();
     markSaving();
+  }
+  if (finishedId === "root") {
+    syncDocumentTitleFromRoot();
   }
   editingId = null;
   hintText.textContent = "双击主题进行编辑";
@@ -1181,10 +1258,11 @@ function fitCanvas() {
 
 function projectData() {
   if (editingId) syncEditingText();
+  syncDocumentTitleFromRoot();
   return {
     format: "mindmap",
     version: 1,
-    title: document.querySelector("#document-title").value.trim() || "未命名思维导图",
+    title: currentMapTitle(),
     savedAt: new Date().toISOString(),
     view: {
       zoom,
@@ -1434,6 +1512,97 @@ function linkSelectedNodeToWorkspaceFile(name) {
   showStatus(`已将“${node.text || "主题"}”链接到 ${name}`, 2200);
 }
 
+function ensureNodeLinkMenu() {
+  if (nodeLinkMenu) return nodeLinkMenu;
+  nodeLinkMenu = document.createElement("div");
+  nodeLinkMenu.className = "node-link-menu";
+  nodeLinkMenu.hidden = true;
+  document.body.append(nodeLinkMenu);
+  return nodeLinkMenu;
+}
+
+function hideNodeLinkMenu() {
+  if (nodeLinkMenu) nodeLinkMenu.hidden = true;
+}
+
+function renderNodeLinkMenu(nodeId) {
+  const menu = ensureNodeLinkMenu();
+  const node = getNode(nodeId);
+  menu.replaceChildren();
+  if (!node) return;
+
+  const title = document.createElement("div");
+  title.className = "node-link-menu-title";
+  title.textContent = `链接“${node.text || "主题"}”`;
+  menu.append(title);
+
+  if (isLinkedNode(node)) {
+    const current = document.createElement("button");
+    current.type = "button";
+    current.className = "node-link-menu-item";
+    current.dataset.action = "open-linked";
+    current.dataset.nodeId = nodeId;
+    current.textContent = `打开当前链接：${node.mapLink.name || node.mapLink.fileName}`;
+    const unlink = document.createElement("button");
+    unlink.type = "button";
+    unlink.className = "node-link-menu-item danger";
+    unlink.dataset.action = "unlink";
+    unlink.dataset.nodeId = nodeId;
+    unlink.textContent = "取消此链接";
+    menu.append(current, unlink);
+  }
+
+  const divider = document.createElement("div");
+  divider.className = "node-link-menu-divider";
+  menu.append(divider);
+
+  if (!workspaceFiles.length) {
+    const empty = document.createElement("div");
+    empty.className = "node-link-menu-empty";
+    empty.textContent = workspaceDirectoryHandle ? "工作目录没有可链接的 map 文件" : "请先选择工作目录";
+    menu.append(empty);
+  } else {
+    workspaceFiles.forEach((file) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "node-link-menu-item";
+      item.dataset.action = "link-file";
+      item.dataset.nodeId = nodeId;
+      item.dataset.name = file.name;
+      item.textContent = file.name;
+      menu.append(item);
+    });
+  }
+
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "node-link-menu-item subtle";
+  refresh.dataset.action = "refresh-files";
+  refresh.dataset.nodeId = nodeId;
+  refresh.textContent = "刷新工作目录文件";
+  menu.append(refresh);
+}
+
+async function showNodeLinkMenu(nodeId, x, y) {
+  if (!workspaceFiles.length && workspaceDirectoryHandle) await refreshWorkspaceFiles();
+  renderNodeLinkMenu(nodeId);
+  const menu = ensureNodeLinkMenu();
+  menu.hidden = false;
+  const menuWidth = 260;
+  const menuHeight = Math.min(menu.scrollHeight || 220, window.innerHeight - 24);
+  menu.style.left = `${clamp(x, 12, window.innerWidth - menuWidth - 12)}px`;
+  menu.style.top = `${clamp(y, 12, window.innerHeight - menuHeight - 12)}px`;
+}
+
+function unlinkNodeMap(nodeId) {
+  const node = getNode(nodeId);
+  if (!node?.mapLink) return;
+  pushHistory();
+  delete node.mapLink;
+  render();
+  showStatus("已取消链接");
+}
+
 async function followNodeMapLink(id) {
   const node = getNode(id);
   if (!isLinkedNode(node)) return false;
@@ -1663,7 +1832,9 @@ function applyProjectData(
   zoom = view?.zoom ?? data.view.zoom;
   pan = view?.pan ?? data.view.pan;
   currentLocalId = localId;
-  document.querySelector("#document-title").value = data.title;
+  documentTitleInput.value = data.title || rootTopicTitle();
+  titleEditedByUser = !shouldUseRootTitle(data.title) && String(data.title || "").trim() !== rootTopicTitle();
+  syncDocumentTitleFromRoot({ force: shouldUseRootTitle(data.title) || String(data.title || "").trim() === rootTopicTitle() });
   updateHistoryButtons();
   suppressAutosaveMark = !markDirty;
   render();
@@ -2273,6 +2444,32 @@ workspaceFileList.addEventListener("click", (event) => {
     linkSelectedNodeToWorkspaceFile(item.dataset.name);
   }
 });
+document.addEventListener("click", (event) => {
+  if (event.target.closest(".node-link-menu")) return;
+  hideNodeLinkMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideNodeLinkMenu();
+});
+document.addEventListener("click", async (event) => {
+  const item = event.target.closest(".node-link-menu-item");
+  if (!item) return;
+  const nodeId = item.dataset.nodeId;
+  if (item.dataset.action === "link-file") {
+    setSelection([nodeId], nodeId);
+    linkSelectedNodeToWorkspaceFile(item.dataset.name);
+    hideNodeLinkMenu();
+  } else if (item.dataset.action === "open-linked") {
+    hideNodeLinkMenu();
+    await followNodeMapLink(nodeId);
+  } else if (item.dataset.action === "unlink") {
+    unlinkNodeMap(nodeId);
+    hideNodeLinkMenu();
+  } else if (item.dataset.action === "refresh-files") {
+    await refreshWorkspaceFiles();
+    renderNodeLinkMenu(nodeId);
+  }
+});
 mapReturnButton.addEventListener("click", () => {
   const snapshot = mapReturnStack.pop();
   restoreMapSnapshot(snapshot);
@@ -2343,7 +2540,10 @@ openFileInput.addEventListener("change", () => {
   if (file) openProject(file);
 });
 
-document.querySelector("#document-title").addEventListener("input", markSaving);
+documentTitleInput.addEventListener("input", () => {
+  titleEditedByUser = !shouldUseRootTitle();
+  markSaving();
+});
 document.addEventListener("keydown", (event) => {
   if (!searchState.jumpArmed) return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -2471,6 +2671,13 @@ viewport.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     event.stopPropagation();
     openNodeDocument(topic.dataset.id);
+    return;
+  }
+  if (event.button === 2 && topic) {
+    event.preventDefault();
+    event.stopPropagation();
+    selectNode(topic.dataset.id);
+    showNodeLinkMenu(topic.dataset.id, event.clientX, event.clientY);
     return;
   }
   const wantsPan = event.button === 1 || event.button === 2;
