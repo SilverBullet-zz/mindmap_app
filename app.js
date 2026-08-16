@@ -9,6 +9,7 @@ const WORKSPACE_HANDLE_KEY = "working-directory";
 const WORKSPACE_NAME_KEY = "zhitu.workspaceName.v1";
 const WORKSPACE_WIDTH_KEY = "zhitu.workspaceWidth.v1";
 const WORKSPACE_COLLAPSED_KEY = "zhitu.workspaceCollapsed.v1";
+const WORKSPACE_CURRENT_FILE_KEY = "zhitu.workspaceCurrentFile.v1";
 const WORKSPACE_FILE_EXTENSIONS = [".mindmap.json", ".json"];
 const AUTOSAVE_INTERVAL = 5000;
 const DEFAULT_DOCUMENT_TITLE = "未命名思维导图";
@@ -110,6 +111,10 @@ let homeMode = "maps";
 let workspaceDirectoryHandle = null;
 let workspaceResize = null;
 let workspaceFiles = [];
+let workspaceHomeItems = [];
+let currentWorkspaceFileName = null;
+let autosaveWorkspacePromise = null;
+let autosaveWorkspaceQueued = false;
 let mapReturnStack = [];
 let titleEditedByUser = false;
 let nodeLinkMenu = null;
@@ -1367,7 +1372,11 @@ async function initializeWorkspaceDirectory() {
     workspaceDirectoryHandle = null;
   }
   updateWorkspaceUi();
-  refreshWorkspaceFiles();
+  await refreshWorkspaceFiles();
+  const savedFileName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_CURRENT_FILE_KEY) : "";
+  if (savedFileName && workspaceFileByName(savedFileName)) {
+    await openWorkspaceMapFile(savedFileName, { restore: true });
+  }
 }
 
 async function chooseWorkspaceDirectory() {
@@ -1448,8 +1457,10 @@ function renderWorkspaceFiles() {
 
 async function refreshWorkspaceFiles() {
   workspaceFiles = [];
+  workspaceHomeItems = [];
   if (!workspaceDirectoryHandle) {
     renderWorkspaceFiles();
+    renderHomeList();
     return;
   }
   try {
@@ -1460,13 +1471,31 @@ async function refreshWorkspaceFiles() {
     }
     for await (const [name, handle] of workspaceDirectoryHandle.entries()) {
       if (handle.kind !== "file" || !isMindmapFileName(name)) continue;
-      workspaceFiles.push({ name, handle });
+      const item = { name, id: name, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题" };
+      try {
+        const file = await handle.getFile();
+        const data = normalizeProject(JSON.parse(await file.text()));
+        item.title = data.title || data.nodes.find((node) => node.id === "root")?.text || name;
+        item.updatedAt = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
+        item.nodeCount = data.nodes.length;
+        item.preview = data.nodes.find((node) => node.id === "root")?.text || "主题";
+      } catch {
+        item.title = name;
+      }
+      workspaceFiles.push(item);
+      workspaceHomeItems.push(item);
     }
     workspaceFiles.sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
+    workspaceHomeItems.sort((a, b) => {
+      const time = new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+      return time || a.name.localeCompare(b.name, "zh-CN", { numeric: true });
+    });
     renderWorkspaceFiles();
+    renderHomeList();
   } catch (error) {
     console.error(error);
     renderWorkspaceFiles();
+    renderHomeList();
     showStatus("无法读取工作目录文件", 2200);
   }
 }
@@ -1475,7 +1504,73 @@ function workspaceFileByName(name) {
   return workspaceFiles.find((file) => file.name === name);
 }
 
-async function openWorkspaceMapFile(name, { fromLinkNodeId = null } = {}) {
+function safeFileBaseName(value) {
+  const cleaned = String(value || "mindmap")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+  return cleaned || "mindmap";
+}
+
+async function uniqueWorkspaceFileName(baseName) {
+  const base = safeFileBaseName(baseName);
+  const existing = new Set(workspaceFiles.map((file) => file.name.toLocaleLowerCase()));
+  let name = `${base}.mindmap.json`;
+  let index = 2;
+  while (existing.has(name.toLocaleLowerCase())) {
+    name = `${base}-${index}.mindmap.json`;
+    index += 1;
+  }
+  return name;
+}
+
+async function writeWorkspaceProjectFile(name, data) {
+  if (!workspaceDirectoryHandle) return false;
+  if (!await ensureWorkspacePermission("readwrite")) return false;
+  const handle = await workspaceDirectoryHandle.getFileHandle(name, { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }));
+  await writable.close();
+  currentWorkspaceFileName = name;
+  if (localStorageAvailable()) localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, name);
+  return true;
+}
+
+async function autosaveWorkspace({ silent = true } = {}) {
+  if (!workspaceDirectoryHandle) return autosaveLocalStorage({ silent });
+  if (autosaveWorkspacePromise) {
+    autosaveWorkspaceQueued = true;
+    return autosaveWorkspacePromise;
+  }
+  autosaveWorkspacePromise = (async () => {
+    try {
+      const data = projectData();
+      data.localId = currentLocalId;
+      const name = currentWorkspaceFileName || await uniqueWorkspaceFileName(data.title || rootTopicTitle());
+      const saved = await writeWorkspaceProjectFile(name, data);
+      if (!saved) return autosaveLocalStorage({ silent });
+      autosaveDirty = false;
+      window.clearTimeout(markSaving.timer);
+      document.querySelector(".save-state").textContent = silent ? "工作目录已自动保存" : "工作目录已保存";
+      await refreshWorkspaceFiles();
+      return true;
+    } catch (error) {
+      console.error(error);
+      if (!silent) showStatus("工作目录自动保存失败", 2200);
+      return autosaveLocalStorage({ silent });
+    } finally {
+      autosaveWorkspacePromise = null;
+      if (autosaveWorkspaceQueued) {
+        autosaveWorkspaceQueued = false;
+        autosaveWorkspace({ silent: true });
+      }
+    }
+  })();
+  return autosaveWorkspacePromise;
+}
+
+async function openWorkspaceMapFile(name, { fromLinkNodeId = null, restore = false } = {}) {
   let entry = workspaceFileByName(name);
   if (!entry) {
     await refreshWorkspaceFiles();
@@ -1488,8 +1583,10 @@ async function openWorkspaceMapFile(name, { fromLinkNodeId = null } = {}) {
   try {
     if (fromLinkNodeId) mapReturnStack.push(currentMapSnapshot({ focusNodeId: fromLinkNodeId }));
     const opened = await openProject(await entry.handle.getFile(), {
-      status: fromLinkNodeId ? `已打开链接：${name}` : "工作目录文件已打开",
+      status: restore ? "已恢复工作目录文件" : fromLinkNodeId ? `已打开链接：${name}` : "工作目录文件已打开",
       keepReturnStack: Boolean(fromLinkNodeId),
+      workspaceFileName: name,
+      markDirty: false,
     });
     if (!opened && fromLinkNodeId) mapReturnStack.pop();
     updateMapReturnButton();
@@ -1629,7 +1726,8 @@ async function openProjectFromPicker() {
     }
     const [handle] = await window.showOpenFilePicker(options);
     if (!handle) return;
-    await openProject(await handle.getFile());
+    const file = await handle.getFile();
+    await openProject(file, { workspaceFileName: file.name });
   } catch (error) {
     if (error?.name !== "AbortError") {
       console.error(error);
@@ -1696,7 +1794,7 @@ function updateLocalIndexEntry(data, id = currentLocalId) {
   writeLocalIndex(index.slice(0, 80));
 }
 
-function autosaveLocal({ silent = true } = {}) {
+function autosaveLocalStorage({ silent = true } = {}) {
   if (!localStorageAvailable()) {
     if (!silent) showStatus("浏览器本地存储不可用", 2200);
     return false;
@@ -1722,19 +1820,14 @@ function autosaveLocal({ silent = true } = {}) {
   }
 }
 
+function autosaveLocal(options = {}) {
+  return autosaveWorkspace(options);
+}
+
 async function saveProject() {
   if (editingId) finishEditing();
-  autosaveLocal({ silent: false });
-  const json = JSON.stringify(projectData(), null, 2);
-  const saved = await saveBlobToFile(
-    new Blob([json], { type: "application/json;charset=utf-8" }),
-    exportFilename("mindmap.json"),
-    {
-      description: "Mindmap 工程",
-      accept: { "application/json": [".mindmap.json", ".json"] },
-    }
-  );
-  showStatus(saved ? "工程已保存" : "已取消保存");
+  const saved = await autosaveLocal({ silent: false });
+  showStatus(saved ? "工程已保存到工作目录" : "工程已保存到浏览器本地");
 }
 
 function normalizeProject(data) {
@@ -1846,13 +1939,23 @@ function applyProjectData(
 
 async function openProject(
   file,
-  { status = "工程已打开", localId = createLocalId(), markDirty = true, keepReturnStack = false } = {}
+  {
+    status = "工程已打开",
+    localId = createLocalId(),
+    markDirty = true,
+    keepReturnStack = false,
+    workspaceFileName = null,
+  } = {}
 ) {
   try {
     if (!keepReturnStack) mapReturnStack = [];
     const data = normalizeProject(JSON.parse(await file.text()));
+    currentWorkspaceFileName = workspaceFileName || null;
+    if (currentWorkspaceFileName && localStorageAvailable()) {
+      localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, currentWorkspaceFileName);
+    }
     applyProjectData(data, { localId, status, markDirty });
-    autosaveLocal();
+    await autosaveLocal();
     updateMapReturnButton();
     return true;
   } catch (error) {
@@ -1878,7 +1981,8 @@ function formatLocalTime(value) {
 function renderHomeList() {
   if (!homeList) return;
   const isTrash = homeMode === "trash";
-  const index = isTrash ? readLocalTrash() : readActiveLocalIndex({ repair: true });
+  const usingWorkspace = Boolean(workspaceDirectoryHandle) && !isTrash;
+  const index = isTrash ? readLocalTrash() : usingWorkspace ? workspaceHomeItems : readActiveLocalIndex({ repair: true });
   if (trashButton) {
     trashButton.textContent = isTrash ? "返回列表" : `垃圾桶 ${readLocalTrash().length ? `(${readLocalTrash().length})` : ""}`;
     trashButton.setAttribute("aria-pressed", isTrash ? "true" : "false");
@@ -1889,21 +1993,25 @@ function renderHomeList() {
     empty.className = "home-empty";
     empty.innerHTML = isTrash
       ? "<strong>垃圾桶是空的</strong><span>删除的本地思维导图会先放在这里，可以恢复。</span>"
-      : "<strong>还没有本地思维导图</strong><span>当前画布会每 5 秒自动保存，并出现在这里。</span>";
+      : usingWorkspace
+        ? "<strong>工作目录中还没有思维导图</strong><span>当前画布会每 5 秒自动保存到这个文件夹，并出现在这里。</span>"
+        : "<strong>还没有本地思维导图</strong><span>选择工作目录后，首页会显示文件夹中的思维导图。</span>";
     homeList.append(empty);
     return;
   }
   index.forEach((item) => {
     const card = document.createElement("article");
-    card.className = `home-card${item.id === currentLocalId && !isTrash ? " current" : ""}${isTrash ? " trashed" : ""}`;
+    const current = usingWorkspace ? item.name === currentWorkspaceFileName : item.id === currentLocalId;
+    card.className = `home-card${current && !isTrash ? " current" : ""}${isTrash ? " trashed" : ""}`;
     card.dataset.id = item.id;
+    if (item.name) card.dataset.name = item.name;
 
     const title = document.createElement("strong");
     title.textContent = item.title || "未命名思维导图";
     const meta = document.createElement("span");
     meta.textContent = isTrash
       ? `${item.nodeCount || 0} 个主题 · 删除于 ${formatLocalTime(item.deletedAt)}`
-      : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)}`;
+      : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)}${usingWorkspace ? " · 工作目录" : ""}`;
     const preview = document.createElement("small");
     preview.textContent = item.preview || "主题";
 
@@ -1931,7 +2039,7 @@ function renderHomeList() {
       remove.type = "button";
       remove.className = "text-button danger";
       remove.dataset.action = "delete";
-      remove.textContent = "移入垃圾桶";
+      remove.textContent = usingWorkspace ? "删除文件" : "移入垃圾桶";
       actions.append(open, remove);
     }
     card.append(title, meta, preview, actions);
@@ -1939,9 +2047,10 @@ function renderHomeList() {
   });
 }
 
-function openHome() {
-  autosaveLocal();
+async function openHome() {
+  await autosaveLocal();
   homeMode = "maps";
+  if (workspaceDirectoryHandle) await refreshWorkspaceFiles();
   renderHomeList();
   homeOverlay.hidden = false;
 }
@@ -1952,6 +2061,12 @@ function closeHome() {
 }
 
 function openLocalMap(id, { keepHomeOpen = false } = {}) {
+  if (workspaceDirectoryHandle) {
+    openWorkspaceMapFile(id).then((opened) => {
+      if (opened && !keepHomeOpen) closeHome();
+    });
+    return;
+  }
   try {
     mapReturnStack = [];
     const raw = localStorage.getItem(`${LOCAL_MAP_PREFIX}${id}`);
@@ -1968,7 +2083,44 @@ function openLocalMap(id, { keepHomeOpen = false } = {}) {
   }
 }
 
+async function deleteWorkspaceMapFile(name) {
+  const entry = workspaceFileByName(name);
+  const title = entry?.title || name;
+  if (!workspaceDirectoryHandle || !entry) {
+    showStatus("工作目录中找不到此文件", 2200);
+    await refreshWorkspaceFiles();
+    return;
+  }
+  if (!window.confirm(`确认删除“${title}”吗？\n\n这会从当前工作目录中移除该文件。`)) return;
+  try {
+    if (!await ensureWorkspacePermission("readwrite")) {
+      showStatus("需要授权工作目录", 2200);
+      return;
+    }
+    await workspaceDirectoryHandle.removeEntry(name);
+    if (currentWorkspaceFileName === name) {
+      currentWorkspaceFileName = null;
+      const next = workspaceFiles.find((file) => file.name !== name);
+      if (next) {
+        await openWorkspaceMapFile(next.name, { keepHomeOpen: true });
+      } else {
+        newLocalMap({ keepHomeOpen: true });
+        await autosaveLocal({ silent: true });
+      }
+    }
+    await refreshWorkspaceFiles();
+    showStatus("已从工作目录删除");
+  } catch (error) {
+    console.error(error);
+    showStatus("无法删除工作目录文件", 2200);
+  }
+}
+
 function deleteLocalMap(id) {
+  if (workspaceDirectoryHandle) {
+    deleteWorkspaceMapFile(id);
+    return;
+  }
   const raw = localStorage.getItem(`${LOCAL_MAP_PREFIX}${id}`);
   if (!raw) {
     writeLocalIndex(readActiveLocalIndex({ repair: true }).filter((item) => item.id !== id));
@@ -2059,8 +2211,9 @@ function purgeLocalMap(id) {
 function newLocalMap({ keepHomeOpen = false } = {}) {
   homeMode = "maps";
   mapReturnStack = [];
+  currentWorkspaceFileName = null;
   applyProjectData({
-    title: "未命名思维导图",
+    title: "主题",
     nodes: createDefaultNodes(),
     view: { zoom: 1, pan: { x: 0, y: 0 } },
   }, { localId: createLocalId(), status: "已新建本地思维导图", markDirty: true });
@@ -2525,12 +2678,12 @@ trashButton.addEventListener("click", () => {
 homeOverlay.addEventListener("click", (event) => {
   if (event.target === homeOverlay) closeHome();
 });
-homeList.addEventListener("click", (event) => {
+homeList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   const card = event.target.closest(".home-card");
   if (!button || !card) return;
   if (button.dataset.action === "open") {
-    autosaveLocal();
+    await autosaveLocal();
     openLocalMap(card.dataset.id);
   } else if (button.dataset.action === "delete") {
     deleteLocalMap(card.dataset.id);
@@ -3115,8 +3268,12 @@ window.setInterval(() => {
   if (autosaveDirty) autosaveLocal();
 }, AUTOSAVE_INTERVAL);
 
-initializeWorkspaceDirectory();
-restoreLastLocalMap();
-renderHomeList();
-render();
-viewport.focus();
+async function bootstrapApp() {
+  await initializeWorkspaceDirectory();
+  if (!workspaceDirectoryHandle) restoreLastLocalMap();
+  renderHomeList();
+  render();
+  viewport.focus();
+}
+
+bootstrapApp();
