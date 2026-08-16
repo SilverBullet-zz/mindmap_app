@@ -753,19 +753,60 @@ button {
   background: rgba(247, 255, 251, 0.72);
 }
 
-.workspace-file-item {
-  display: grid;
-  gap: 6px;
+.workspace-tree-row {
+  --tree-depth: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
-  padding: 9px;
+  min-height: 32px;
+  padding: 6px 7px 6px calc(8px + var(--tree-depth) * 18px);
   border: 1px solid #d8ece2;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
 }
 
-.workspace-file-item:hover {
+.workspace-tree-row:hover {
   border-color: #a9dccd;
   background: #fbfffd;
+}
+
+.workspace-tree-row.folder {
+  width: 100%;
+  color: #31463d;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-tree-row.folder[aria-expanded="true"] {
+  background: rgba(229, 245, 236, 0.85);
+}
+
+.workspace-tree-row.file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.tree-chevron {
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #8aa399;
+  border-bottom: 2px solid #8aa399;
+  transform: rotate(-45deg);
+}
+
+.workspace-tree-row.folder[aria-expanded="true"] .tree-chevron {
+  transform: rotate(45deg);
+}
+
+.tree-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-file-name {
@@ -1686,7 +1727,7 @@ button {
   display: block;
   width: 100%;
   min-width: 0;
-  padding: 8px 9px;
+  padding: 8px 9px 8px calc(9px + var(--tree-depth, 0) * 16px);
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -1699,6 +1740,26 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.node-link-menu-item.folder {
+  color: #31463d;
+  font-weight: 800;
+}
+
+.node-link-menu-item.folder::before {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-right: 2px solid #8aa399;
+  border-bottom: 2px solid #8aa399;
+  content: "";
+  transform: rotate(-45deg);
+}
+
+.node-link-menu-item.folder[aria-expanded="true"]::before {
+  transform: rotate(45deg);
 }
 
 .node-link-menu-item:hover {

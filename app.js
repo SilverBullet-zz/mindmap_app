@@ -112,6 +112,8 @@ let workspaceDirectoryHandle = null;
 let workspaceResize = null;
 let workspaceFiles = [];
 let workspaceHomeItems = [];
+let workspaceTree = [];
+let expandedWorkspaceFolders = new Set();
 let currentWorkspaceFileName = null;
 let autosaveWorkspacePromise = null;
 let autosaveWorkspaceQueued = false;
@@ -1408,6 +1410,14 @@ function isMindmapFileName(name) {
   return WORKSPACE_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension));
 }
 
+function joinWorkspacePath(parentPath, name) {
+  return parentPath ? `${parentPath}/${name}` : name;
+}
+
+function pathDepth(path) {
+  return String(path || "").split("/").filter(Boolean).length - 1;
+}
+
 function renderWorkspaceFiles() {
   if (!workspaceFileList) return;
   workspaceFileList.replaceChildren();
@@ -1418,46 +1428,73 @@ function renderWorkspaceFiles() {
     workspaceFileList.append(empty);
     return;
   }
-  if (!workspaceFiles.length) {
+  if (!workspaceTree.length) {
     const empty = document.createElement("div");
     empty.className = "workspace-file-empty";
     empty.textContent = "没有找到 .mindmap.json 文件";
     workspaceFileList.append(empty);
     return;
   }
-  workspaceFiles.forEach((file) => {
-    const item = document.createElement("div");
-    item.className = "workspace-file-item";
-    item.dataset.name = file.name;
 
-    const name = document.createElement("button");
-    name.type = "button";
-    name.className = "workspace-file-name";
-    name.dataset.action = "open";
-    name.title = file.name;
-    name.textContent = file.name;
+  const renderEntries = (entries, depth = 0) => {
+    entries.forEach((entry) => {
+      if (entry.kind === "directory") {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "workspace-tree-row folder";
+        row.dataset.action = "toggle-folder";
+        row.dataset.path = entry.path;
+        row.style.setProperty("--tree-depth", depth);
+        row.setAttribute("aria-expanded", String(expandedWorkspaceFolders.has(entry.path)));
+        const chevron = document.createElement("span");
+        chevron.className = "tree-chevron";
+        chevron.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.className = "tree-label";
+        label.textContent = entry.name;
+        row.append(chevron, label);
+        workspaceFileList.append(row);
+        if (expandedWorkspaceFolders.has(entry.path)) renderEntries(entry.children, depth + 1);
+        return;
+      }
 
-    const actions = document.createElement("div");
-    actions.className = "workspace-file-actions";
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "text-button";
-    open.dataset.action = "open";
-    open.textContent = "打开";
-    const link = document.createElement("button");
-    link.type = "button";
-    link.className = "text-button";
-    link.dataset.action = "link";
-    link.textContent = "链接";
-    actions.append(open, link);
-    item.append(name, actions);
-    workspaceFileList.append(item);
-  });
+      const item = document.createElement("div");
+      item.className = "workspace-tree-row file";
+      item.dataset.name = entry.path;
+      item.style.setProperty("--tree-depth", depth);
+
+      const name = document.createElement("button");
+      name.type = "button";
+      name.className = "workspace-file-name";
+      name.dataset.action = "open";
+      name.title = entry.path;
+      name.textContent = entry.name;
+
+      const actions = document.createElement("div");
+      actions.className = "workspace-file-actions";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "text-button";
+      open.dataset.action = "open";
+      open.textContent = "打开";
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "text-button";
+      link.dataset.action = "link";
+      link.textContent = "链接";
+      actions.append(open, link);
+      item.append(name, actions);
+      workspaceFileList.append(item);
+    });
+  };
+
+  renderEntries(workspaceTree);
 }
 
 async function refreshWorkspaceFiles() {
   workspaceFiles = [];
   workspaceHomeItems = [];
+  workspaceTree = [];
   if (!workspaceDirectoryHandle) {
     renderWorkspaceFiles();
     renderHomeList();
@@ -1469,26 +1506,49 @@ async function refreshWorkspaceFiles() {
       showStatus("需要授权工作目录", 2200);
       return;
     }
-    for await (const [name, handle] of workspaceDirectoryHandle.entries()) {
-      if (handle.kind !== "file" || !isMindmapFileName(name)) continue;
-      const item = { name, id: name, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题" };
-      try {
-        const file = await handle.getFile();
-        const data = normalizeProject(JSON.parse(await file.text()));
-        item.title = data.title || data.nodes.find((node) => node.id === "root")?.text || name;
-        item.updatedAt = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
-        item.nodeCount = data.nodes.length;
-        item.preview = data.nodes.find((node) => node.id === "root")?.text || "主题";
-      } catch {
-        item.title = name;
+    const scanDirectory = async (directoryHandle, parentPath = "") => {
+      const entries = [];
+      for await (const [name, handle] of directoryHandle.entries()) {
+        const path = joinWorkspacePath(parentPath, name);
+        if (handle.kind === "directory") {
+          const directoryEntry = {
+            kind: "directory",
+            name,
+            path,
+            handle,
+            children: await scanDirectory(handle, path),
+          };
+          if (directoryEntry.children.length) entries.push(directoryEntry);
+          continue;
+        }
+        if (!isMindmapFileName(name)) continue;
+        const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题" };
+        try {
+          const file = await handle.getFile();
+          const data = normalizeProject(JSON.parse(await file.text()));
+          item.title = data.title || data.nodes.find((node) => node.id === "root")?.text || name;
+          item.updatedAt = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
+          item.nodeCount = data.nodes.length;
+          item.preview = data.nodes.find((node) => node.id === "root")?.text || "主题";
+        } catch {
+          item.title = name;
+        }
+        workspaceFiles.push(item);
+        workspaceHomeItems.push(item);
+        entries.push(item);
       }
-      workspaceFiles.push(item);
-      workspaceHomeItems.push(item);
-    }
-    workspaceFiles.sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
+      entries.sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+        return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
+      });
+      return entries;
+    };
+
+    workspaceTree = await scanDirectory(workspaceDirectoryHandle);
+    workspaceFiles.sort((a, b) => a.path.localeCompare(b.path, "zh-CN", { numeric: true }));
     workspaceHomeItems.sort((a, b) => {
       const time = new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
-      return time || a.name.localeCompare(b.name, "zh-CN", { numeric: true });
+      return time || a.path.localeCompare(b.path, "zh-CN", { numeric: true });
     });
     renderWorkspaceFiles();
     renderHomeList();
@@ -1501,7 +1561,7 @@ async function refreshWorkspaceFiles() {
 }
 
 function workspaceFileByName(name) {
-  return workspaceFiles.find((file) => file.name === name);
+  return workspaceFiles.find((file) => file.path === name || file.name === name);
 }
 
 function safeFileBaseName(value) {
@@ -1515,7 +1575,7 @@ function safeFileBaseName(value) {
 
 async function uniqueWorkspaceFileName(baseName) {
   const base = safeFileBaseName(baseName);
-  const existing = new Set(workspaceFiles.map((file) => file.name.toLocaleLowerCase()));
+  const existing = new Set(workspaceFiles.map((file) => file.path.toLocaleLowerCase()));
   let name = `${base}.mindmap.json`;
   let index = 2;
   while (existing.has(name.toLocaleLowerCase())) {
@@ -1525,10 +1585,21 @@ async function uniqueWorkspaceFileName(baseName) {
   return name;
 }
 
+async function getWorkspaceFileHandleByPath(path, { create = false } = {}) {
+  if (!workspaceDirectoryHandle) return null;
+  const parts = String(path || "").split("/").filter(Boolean);
+  if (!parts.length) return null;
+  let directory = workspaceDirectoryHandle;
+  for (const folder of parts.slice(0, -1)) {
+    directory = await directory.getDirectoryHandle(folder, { create });
+  }
+  return directory.getFileHandle(parts.at(-1), { create });
+}
+
 async function writeWorkspaceProjectFile(name, data) {
   if (!workspaceDirectoryHandle) return false;
   if (!await ensureWorkspacePermission("readwrite")) return false;
-  const handle = await workspaceDirectoryHandle.getFileHandle(name, { create: true });
+  const handle = await getWorkspaceFileHandleByPath(name, { create: true });
   const writable = await handle.createWritable();
   await writable.write(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }));
   await writable.close();
@@ -1653,22 +1724,41 @@ function renderNodeLinkMenu(nodeId) {
   divider.className = "node-link-menu-divider";
   menu.append(divider);
 
-  if (!workspaceFiles.length) {
+  if (!workspaceTree.length) {
     const empty = document.createElement("div");
     empty.className = "node-link-menu-empty";
     empty.textContent = workspaceDirectoryHandle ? "工作目录没有可链接的 map 文件" : "请先选择工作目录";
     menu.append(empty);
   } else {
-    workspaceFiles.forEach((file) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "node-link-menu-item";
-      item.dataset.action = "link-file";
-      item.dataset.nodeId = nodeId;
-      item.dataset.name = file.name;
-      item.textContent = file.name;
-      menu.append(item);
-    });
+    const renderEntries = (entries, depth = 0) => {
+      entries.forEach((entry) => {
+        if (entry.kind === "directory") {
+          const folder = document.createElement("button");
+          folder.type = "button";
+          folder.className = "node-link-menu-item folder";
+          folder.dataset.action = "toggle-link-folder";
+          folder.dataset.nodeId = nodeId;
+          folder.dataset.path = entry.path;
+          folder.style.setProperty("--tree-depth", depth);
+          folder.setAttribute("aria-expanded", String(expandedWorkspaceFolders.has(entry.path)));
+          folder.textContent = entry.name;
+          menu.append(folder);
+          if (expandedWorkspaceFolders.has(entry.path)) renderEntries(entry.children, depth + 1);
+          return;
+        }
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "node-link-menu-item";
+        item.dataset.action = "link-file";
+        item.dataset.nodeId = nodeId;
+        item.dataset.name = entry.path;
+        item.style.setProperty("--tree-depth", depth);
+        item.textContent = entry.name;
+        item.title = entry.path;
+        menu.append(item);
+      });
+    };
+    renderEntries(workspaceTree);
   }
 
   const refresh = document.createElement("button");
@@ -2001,17 +2091,17 @@ function renderHomeList() {
   }
   index.forEach((item) => {
     const card = document.createElement("article");
-    const current = usingWorkspace ? item.name === currentWorkspaceFileName : item.id === currentLocalId;
+    const current = usingWorkspace ? item.path === currentWorkspaceFileName : item.id === currentLocalId;
     card.className = `home-card${current && !isTrash ? " current" : ""}${isTrash ? " trashed" : ""}`;
     card.dataset.id = item.id;
-    if (item.name) card.dataset.name = item.name;
+    if (item.path) card.dataset.name = item.path;
 
     const title = document.createElement("strong");
     title.textContent = item.title || "未命名思维导图";
     const meta = document.createElement("span");
     meta.textContent = isTrash
       ? `${item.nodeCount || 0} 个主题 · 删除于 ${formatLocalTime(item.deletedAt)}`
-      : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)}${usingWorkspace ? " · 工作目录" : ""}`;
+      : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)}${usingWorkspace ? ` · ${item.path || "工作目录"}` : ""}`;
     const preview = document.createElement("small");
     preview.textContent = item.preview || "主题";
 
@@ -2097,12 +2187,17 @@ async function deleteWorkspaceMapFile(name) {
       showStatus("需要授权工作目录", 2200);
       return;
     }
-    await workspaceDirectoryHandle.removeEntry(name);
+    const parts = String(name || "").split("/").filter(Boolean);
+    let directory = workspaceDirectoryHandle;
+    for (const folder of parts.slice(0, -1)) {
+      directory = await directory.getDirectoryHandle(folder);
+    }
+    await directory.removeEntry(parts.at(-1));
     if (currentWorkspaceFileName === name) {
       currentWorkspaceFileName = null;
-      const next = workspaceFiles.find((file) => file.name !== name);
+      const next = workspaceFiles.find((file) => file.path !== name);
       if (next) {
-        await openWorkspaceMapFile(next.name, { keepHomeOpen: true });
+        await openWorkspaceMapFile(next.path, { keepHomeOpen: true });
       } else {
         newLocalMap({ keepHomeOpen: true });
         await autosaveLocal({ silent: true });
@@ -2588,7 +2683,15 @@ openWorkspaceFileButton.addEventListener("click", openProjectFromPicker);
 refreshWorkspaceFilesButton.addEventListener("click", () => refreshWorkspaceFiles());
 workspaceFileList.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
-  const item = event.target.closest(".workspace-file-item");
+  const folder = event.target.closest("[data-action='toggle-folder']");
+  if (folder) {
+    const path = folder.dataset.path;
+    if (expandedWorkspaceFolders.has(path)) expandedWorkspaceFolders.delete(path);
+    else expandedWorkspaceFolders.add(path);
+    renderWorkspaceFiles();
+    return;
+  }
+  const item = event.target.closest(".workspace-tree-row.file");
   if (!action || !item) return;
   if (action === "open") {
     mapReturnStack = [];
@@ -2620,6 +2723,11 @@ document.addEventListener("click", async (event) => {
     hideNodeLinkMenu();
   } else if (item.dataset.action === "refresh-files") {
     await refreshWorkspaceFiles();
+    renderNodeLinkMenu(nodeId);
+  } else if (item.dataset.action === "toggle-link-folder") {
+    const path = item.dataset.path;
+    if (expandedWorkspaceFolders.has(path)) expandedWorkspaceFolders.delete(path);
+    else expandedWorkspaceFolders.add(path);
     renderNodeLinkMenu(nodeId);
   }
 });
@@ -2983,7 +3091,7 @@ function wrapCanvasText(context, text, maxWidth) {
   return lines;
 }
 
-function createExportCanvas() {
+function createExportCanvas({ maxPixelRatio = 3, maxLongEdge = 7000 } = {}) {
   if (editingId) finishEditing();
   layoutMap();
 
@@ -3003,7 +3111,7 @@ function createExportCanvas() {
   const maxY = Math.max(...boxes.map((box) => box.node.y + box.height / 2)) + padding;
   const logicalWidth = Math.ceil(maxX - minX);
   const logicalHeight = Math.ceil(maxY - minY);
-  const pixelRatio = Math.min(3, Math.max(2, 7000 / Math.max(logicalWidth, logicalHeight)));
+  const pixelRatio = Math.min(maxPixelRatio, Math.max(2, maxLongEdge / Math.max(logicalWidth, logicalHeight)));
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil(logicalWidth * pixelRatio);
   canvas.height = Math.ceil(logicalHeight * pixelRatio);
@@ -3125,7 +3233,7 @@ function canvasToBlob(canvas, type, quality) {
 
 function buildPdf(jpegBytes, imageWidth, imageHeight) {
   const encoder = new TextEncoder();
-  const pageScale = Math.min(1, 1440 / Math.max(imageWidth, imageHeight));
+  const pageScale = Math.min(1, 1800 / Math.max(imageWidth, imageHeight));
   const pageWidth = Math.round(imageWidth * pageScale);
   const pageHeight = Math.round(imageHeight * pageScale);
   const content = `q\n${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im0 Do\nQ\n`;
@@ -3202,8 +3310,8 @@ async function exportMap(format) {
         return;
       }
     } else {
-      const canvas = createExportCanvas();
-      const jpegBlob = await canvasToBlob(canvas, "image/jpeg", 0.95);
+      const canvas = createExportCanvas({ maxPixelRatio: 3.25, maxLongEdge: 8600 });
+      const jpegBlob = await canvasToBlob(canvas, "image/jpeg", 0.97);
       const jpegBytes = new Uint8Array(await jpegBlob.arrayBuffer());
       const pdf = buildPdf(jpegBytes, canvas.width, canvas.height);
       const saved = await saveBlobToFile(pdf, exportFilename("pdf"), {
