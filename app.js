@@ -2475,6 +2475,11 @@ mapReturnButton.addEventListener("click", () => {
   restoreMapSnapshot(snapshot);
   updateMapReturnButton();
 });
+["pointerdown", "pointerup", "click"].forEach((eventName) => {
+  mapReturnButton.addEventListener(eventName, (event) => {
+    event.stopPropagation();
+  });
+});
 workspaceCollapseButton.addEventListener("click", () => {
   const collapsed = !workspaceSidebar.classList.contains("collapsed");
   if (localStorageAvailable()) localStorage.setItem(WORKSPACE_COLLAPSED_KEY, String(collapsed));
@@ -2666,6 +2671,7 @@ function startCanvasPan(event) {
 }
 
 viewport.addEventListener("pointerdown", (event) => {
+  if (event.target.closest(".map-return-button")) return;
   const topic = event.target.closest(".topic-node");
   if (event.button === 2 && event.shiftKey && topic) {
     event.preventDefault();
