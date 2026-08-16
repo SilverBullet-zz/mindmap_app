@@ -2070,77 +2070,65 @@ function formatLocalTime(value) {
 
 function renderHomeList() {
   if (!homeList) return;
-  const isTrash = homeMode === "trash";
-  const usingWorkspace = Boolean(workspaceDirectoryHandle) && !isTrash;
-  const index = isTrash ? readLocalTrash() : usingWorkspace ? workspaceHomeItems : readActiveLocalIndex({ repair: true });
+  const isTrash = false;
+  const index = workspaceDirectoryHandle ? workspaceHomeItems : [];
   if (trashButton) {
-    trashButton.textContent = isTrash ? "返回列表" : `垃圾桶 ${readLocalTrash().length ? `(${readLocalTrash().length})` : ""}`;
-    trashButton.setAttribute("aria-pressed", isTrash ? "true" : "false");
+    trashButton.hidden = true;
+    trashButton.setAttribute("aria-pressed", "false");
   }
   homeList.replaceChildren();
   if (!index.length) {
     const empty = document.createElement("div");
     empty.className = "home-empty";
-    empty.innerHTML = isTrash
-      ? "<strong>垃圾桶是空的</strong><span>删除的本地思维导图会先放在这里，可以恢复。</span>"
-      : usingWorkspace
-        ? "<strong>工作目录中还没有思维导图</strong><span>当前画布会每 5 秒自动保存到这个文件夹，并出现在这里。</span>"
-        : "<strong>还没有本地思维导图</strong><span>选择工作目录后，首页会显示文件夹中的思维导图。</span>";
+    empty.innerHTML = workspaceDirectoryHandle
+      ? "<strong>工作目录中还没有思维导图</strong><span>当前画布会每 5 秒自动保存到这个文件夹，并出现在这里。</span>"
+      : "<strong>还没有选择工作目录</strong><span>首页只显示当前 Working Folder 中的思维导图。</span>";
     homeList.append(empty);
     return;
   }
   index.forEach((item) => {
     const card = document.createElement("article");
-    const current = usingWorkspace ? item.path === currentWorkspaceFileName : item.id === currentLocalId;
-    card.className = `home-card${current && !isTrash ? " current" : ""}${isTrash ? " trashed" : ""}`;
+    const current = item.path === currentWorkspaceFileName;
+    card.className = `home-card${current ? " current" : ""}`;
     card.dataset.id = item.id;
     if (item.path) card.dataset.name = item.path;
 
     const title = document.createElement("strong");
     title.textContent = item.title || "未命名思维导图";
     const meta = document.createElement("span");
-    meta.textContent = isTrash
-      ? `${item.nodeCount || 0} 个主题 · 删除于 ${formatLocalTime(item.deletedAt)}`
-      : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)}${usingWorkspace ? ` · ${item.path || "工作目录"}` : ""}`;
+    meta.textContent = `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${item.path || "工作目录"}`;
     const preview = document.createElement("small");
     preview.textContent = item.preview || "主题";
 
     const actions = document.createElement("div");
     actions.className = "home-card-actions";
-    if (isTrash) {
-      const restore = document.createElement("button");
-      restore.type = "button";
-      restore.className = "secondary-button";
-      restore.dataset.action = "restore";
-      restore.textContent = "恢复";
-      const purge = document.createElement("button");
-      purge.type = "button";
-      purge.className = "text-button danger";
-      purge.dataset.action = "purge";
-      purge.textContent = "彻底删除";
-      actions.append(restore, purge);
-    } else {
-      const open = document.createElement("button");
-      open.type = "button";
-      open.className = "secondary-button";
-      open.dataset.action = "open";
-      open.textContent = "打开";
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "text-button danger";
-      remove.dataset.action = "delete";
-      remove.textContent = usingWorkspace ? "删除文件" : "移入垃圾桶";
-      actions.append(open, remove);
-    }
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "secondary-button";
+    open.dataset.action = "open";
+    open.textContent = "打开";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "text-button danger";
+    remove.dataset.action = "delete";
+    remove.textContent = "删除文件";
+    actions.append(open, remove);
     card.append(title, meta, preview, actions);
     homeList.append(card);
   });
 }
 
 async function openHome() {
+  if (!workspaceDirectoryHandle) {
+    await chooseWorkspaceDirectory();
+    if (!workspaceDirectoryHandle) {
+      showStatus("需要先选择工作目录", 2200);
+      return;
+    }
+  }
   await autosaveLocal();
   homeMode = "maps";
-  if (workspaceDirectoryHandle) await refreshWorkspaceFiles();
+  await refreshWorkspaceFiles();
   renderHomeList();
   homeOverlay.hidden = false;
 }
@@ -2151,26 +2139,9 @@ function closeHome() {
 }
 
 function openLocalMap(id, { keepHomeOpen = false } = {}) {
-  if (workspaceDirectoryHandle) {
-    openWorkspaceMapFile(id).then((opened) => {
-      if (opened && !keepHomeOpen) closeHome();
-    });
-    return;
-  }
-  try {
-    mapReturnStack = [];
-    const raw = localStorage.getItem(`${LOCAL_MAP_PREFIX}${id}`);
-    if (!raw) throw new Error("本地文件不存在");
-    const data = normalizeProject(JSON.parse(raw));
-    applyProjectData(data, { localId: id, status: "本地思维导图已打开" });
-    localStorage.setItem(LOCAL_LAST_KEY, id);
-    autosaveDirty = false;
-    updateMapReturnButton();
-    if (!keepHomeOpen) closeHome();
-  } catch (error) {
-    console.error(error);
-    showStatus("无法打开本地思维导图", 2200);
-  }
+  openWorkspaceMapFile(id).then((opened) => {
+    if (opened && !keepHomeOpen) closeHome();
+  });
 }
 
 async function deleteWorkspaceMapFile(name) {
@@ -2212,10 +2183,9 @@ async function deleteWorkspaceMapFile(name) {
 }
 
 function deleteLocalMap(id) {
-  if (workspaceDirectoryHandle) {
-    deleteWorkspaceMapFile(id);
-    return;
-  }
+  if (workspaceDirectoryHandle) return deleteWorkspaceMapFile(id);
+  showStatus("需要先选择工作目录", 2200);
+  return;
   const raw = localStorage.getItem(`${LOCAL_MAP_PREFIX}${id}`);
   if (!raw) {
     writeLocalIndex(readActiveLocalIndex({ repair: true }).filter((item) => item.id !== id));
@@ -2311,7 +2281,7 @@ function newLocalMap({ keepHomeOpen = false } = {}) {
     title: "主题",
     nodes: createDefaultNodes(),
     view: { zoom: 1, pan: { x: 0, y: 0 } },
-  }, { localId: createLocalId(), status: "已新建本地思维导图", markDirty: true });
+  }, { localId: createLocalId(), status: "已新建工作目录思维导图", markDirty: true });
   autosaveLocal();
   updateMapReturnButton();
   if (!keepHomeOpen) closeHome();
