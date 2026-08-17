@@ -2394,9 +2394,55 @@ function isValidDropTarget(draggedIds, targetId) {
   return draggedIds.every((id) => !descendantsOf(id).includes(targetId));
 }
 
+function dropIntentForPointer(event, targetElement, draggedIds) {
+  const targetId = targetElement?.dataset.id;
+  if (!isValidDropTarget(draggedIds, targetId)) return null;
+  const targetNode = getNode(targetId);
+  if (!targetNode) return null;
+  const rect = targetElement.getBoundingClientRect();
+  const relativeY = (event.clientY - rect.top) / Math.max(1, rect.height);
+  if (targetNode.parentId !== null && relativeY < 0.32) {
+    return { mode: "sibling", targetId, position: "before" };
+  }
+  if (targetNode.parentId !== null && relativeY > 0.68) {
+    return { mode: "sibling", targetId, position: "after" };
+  }
+  return { mode: "child", targetId, position: null };
+}
+
+function reorderDraggedAsSiblings(draggedIds, targetId, position) {
+  const target = getNode(targetId);
+  if (!target || target.parentId === null) return false;
+  const draggedNodes = draggedIds.map((id) => getNode(id)).filter(Boolean);
+  if (!draggedNodes.length) return false;
+  const parent = getNode(target.parentId);
+  const nextParentId = target.parentId;
+  const nextSide = target.side || parent?.side || 1;
+  draggedNodes.forEach((node) => {
+    node.parentId = nextParentId;
+    node.side = nextParentId === "root" ? target.side || node.side || 1 : nextSide;
+  });
+
+  const moving = [];
+  const remaining = [];
+  nodes.forEach((node) => {
+    if (draggedIds.includes(node.id)) moving.push(node);
+    else remaining.push(node);
+  });
+  const targetIndex = remaining.findIndex((node) => node.id === targetId);
+  if (targetIndex === -1) return false;
+  const insertIndex = position === "before" ? targetIndex : targetIndex + 1;
+  nodes = [
+    ...remaining.slice(0, insertIndex),
+    ...moving,
+    ...remaining.slice(insertIndex),
+  ];
+  return true;
+}
+
 function clearDragVisuals() {
-  nodesLayer.querySelectorAll(".dragging, .drop-target").forEach((element) => {
-    element.classList.remove("dragging", "drop-target");
+  nodesLayer.querySelectorAll(".dragging, .drop-target, .drop-before, .drop-after").forEach((element) => {
+    element.classList.remove("dragging", "drop-target", "drop-before", "drop-after");
   });
   document.querySelector(".drag-ghost")?.remove();
 }
@@ -2483,6 +2529,8 @@ nodesLayer.addEventListener("pointerdown", (event) => {
     startY: event.clientY,
     active: false,
     targetId: null,
+    dropMode: null,
+    insertPosition: null,
   };
   nodesLayer.setPointerCapture(event.pointerId);
 });
@@ -2507,7 +2555,7 @@ nodesLayer.addEventListener("pointermove", (event) => {
       ? getNode(nodeDrag.ids[0])?.text || ""
       : `${nodeDrag.ids.length} 个主题`;
     document.body.append(ghost);
-    hintText.textContent = "拖到目标主题上以移动 · Esc 取消";
+    hintText.textContent = "拖到主题中部成为子主题，拖到上/下边缘调整同级顺序 · Esc 取消";
   }
 
   const ghost = document.querySelector(".drag-ghost");
@@ -2515,11 +2563,21 @@ nodesLayer.addEventListener("pointermove", (event) => {
     ghost.style.left = `${event.clientX}px`;
     ghost.style.top = `${event.clientY}px`;
   }
-  nodesLayer.querySelector(".drop-target")?.classList.remove("drop-target");
+  nodesLayer.querySelectorAll(".drop-target, .drop-before, .drop-after").forEach((element) => {
+    element.classList.remove("drop-target", "drop-before", "drop-after");
+  });
   const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest(".topic-node");
-  const targetId = targetElement?.dataset.id;
-  nodeDrag.targetId = isValidDropTarget(nodeDrag.ids, targetId) ? targetId : null;
-  if (nodeDrag.targetId) targetElement.classList.add("drop-target");
+  const intent = dropIntentForPointer(event, targetElement, nodeDrag.ids);
+  nodeDrag.targetId = intent?.targetId || null;
+  nodeDrag.dropMode = intent?.mode || null;
+  nodeDrag.insertPosition = intent?.position || null;
+  if (intent?.mode === "child") {
+    targetElement.classList.add("drop-target");
+    hintText.textContent = `放到“${getNode(intent.targetId)?.text || "主题"}”下`;
+  } else if (intent?.mode === "sibling") {
+    targetElement.classList.add(intent.position === "before" ? "drop-before" : "drop-after");
+    hintText.textContent = intent.position === "before" ? "插入到此主题上方" : "插入到此主题下方";
+  }
 });
 
 function finishNodeDrag(event, cancelled = false) {
@@ -2543,9 +2601,27 @@ function finishNodeDrag(event, cancelled = false) {
     return;
   }
 
-  const targetNode = getNode(dragState.targetId);
   const draggedNodes = dragState.ids.map((id) => getNode(id)).filter(Boolean);
-  if (!draggedNodes.length || !targetNode || draggedNodes.every((node) => node.parentId === targetNode.id)) {
+  const targetNode = getNode(dragState.targetId);
+  if (!draggedNodes.length || !targetNode) {
+    render();
+    return;
+  }
+  if (dragState.dropMode === "sibling") {
+    pushHistory();
+    const reordered = reorderDraggedAsSiblings(dragState.ids, dragState.targetId, dragState.insertPosition);
+    if (!reordered) {
+      render();
+      return;
+    }
+    selectedId = dragState.primaryId;
+    selectedIds = new Set(dragState.ids);
+    render();
+    showStatus(`已调整 ${draggedNodes.length} 个主题的同级顺序`);
+    return;
+  }
+
+  if (draggedNodes.every((node) => node.parentId === targetNode.id)) {
     render();
     return;
   }
