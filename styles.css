@@ -1290,8 +1290,8 @@ button {
 }
 
 .topic-node.drop-target {
-  border-color: #19a974;
-  box-shadow: 0 0 0 4px rgba(25, 169, 116, 0.18), 0 7px 18px rgba(25, 80, 61, 0.12);
+  border-color: rgba(56, 167, 143, 0.55);
+  box-shadow: 0 7px 18px rgba(25, 80, 61, 0.1);
 }
 
 .topic-node.drop-before,
@@ -1320,10 +1320,29 @@ button {
   bottom: -13px;
 }
 
+.topic-node.drop-child-left::after,
+.topic-node.drop-child-right::after {
+  position: absolute;
+  top: -12px;
+  bottom: -12px;
+  width: 4px;
+  border-radius: 999px;
+  background: #18a884;
+  box-shadow: 0 0 0 4px rgba(24, 168, 132, 0.14);
+  content: "";
+}
+
+.topic-node.drop-child-left::after {
+  left: -13px;
+}
+
+.topic-node.drop-child-right::after {
+  right: -13px;
+}
+
 .topic-node.drop-target::before {
   position: absolute;
-  left: 50%;
-  bottom: -25px;
+  bottom: -26px;
   padding: 3px 7px;
   border-radius: 4px;
   background: #16885f;
@@ -1332,7 +1351,16 @@ button {
   font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
-  transform: translateX(-50%);
+}
+
+.topic-node.drop-child-left::before {
+  left: -13px;
+  transform: translateX(-100%);
+}
+
+.topic-node.drop-child-right::before {
+  right: -13px;
+  transform: translateX(100%);
 }
 
 .drag-ghost {

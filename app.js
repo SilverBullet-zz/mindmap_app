@@ -2401,13 +2401,16 @@ function dropIntentForPointer(event, targetElement, draggedIds) {
   if (!targetNode) return null;
   const rect = targetElement.getBoundingClientRect();
   const relativeY = (event.clientY - rect.top) / Math.max(1, rect.height);
+  const direction = targetNode.id === "root"
+    ? event.clientX >= rect.left + rect.width / 2 ? "right" : "left"
+    : (targetNode.side || 1) > 0 ? "right" : "left";
   if (targetNode.parentId !== null && relativeY < 0.32) {
-    return { mode: "sibling", targetId, position: "before" };
+    return { mode: "sibling", targetId, position: "before", direction };
   }
   if (targetNode.parentId !== null && relativeY > 0.68) {
-    return { mode: "sibling", targetId, position: "after" };
+    return { mode: "sibling", targetId, position: "after", direction };
   }
-  return { mode: "child", targetId, position: null };
+  return { mode: "child", targetId, position: null, direction };
 }
 
 function reorderDraggedAsSiblings(draggedIds, targetId, position) {
@@ -2441,8 +2444,8 @@ function reorderDraggedAsSiblings(draggedIds, targetId, position) {
 }
 
 function clearDragVisuals() {
-  nodesLayer.querySelectorAll(".dragging, .drop-target, .drop-before, .drop-after").forEach((element) => {
-    element.classList.remove("dragging", "drop-target", "drop-before", "drop-after");
+  nodesLayer.querySelectorAll(".dragging, .drop-target, .drop-child-left, .drop-child-right, .drop-before, .drop-after").forEach((element) => {
+    element.classList.remove("dragging", "drop-target", "drop-child-left", "drop-child-right", "drop-before", "drop-after");
   });
   document.querySelector(".drag-ghost")?.remove();
 }
@@ -2563,8 +2566,8 @@ nodesLayer.addEventListener("pointermove", (event) => {
     ghost.style.left = `${event.clientX}px`;
     ghost.style.top = `${event.clientY}px`;
   }
-  nodesLayer.querySelectorAll(".drop-target, .drop-before, .drop-after").forEach((element) => {
-    element.classList.remove("drop-target", "drop-before", "drop-after");
+  nodesLayer.querySelectorAll(".drop-target, .drop-child-left, .drop-child-right, .drop-before, .drop-after").forEach((element) => {
+    element.classList.remove("drop-target", "drop-child-left", "drop-child-right", "drop-before", "drop-after");
   });
   const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest(".topic-node");
   const intent = dropIntentForPointer(event, targetElement, nodeDrag.ids);
@@ -2572,7 +2575,7 @@ nodesLayer.addEventListener("pointermove", (event) => {
   nodeDrag.dropMode = intent?.mode || null;
   nodeDrag.insertPosition = intent?.position || null;
   if (intent?.mode === "child") {
-    targetElement.classList.add("drop-target");
+    targetElement.classList.add("drop-target", intent.direction === "left" ? "drop-child-left" : "drop-child-right");
     hintText.textContent = `放到“${getNode(intent.targetId)?.text || "主题"}”下`;
   } else if (intent?.mode === "sibling") {
     targetElement.classList.add(intent.position === "before" ? "drop-before" : "drop-after");
