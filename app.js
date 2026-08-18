@@ -1437,6 +1437,12 @@ function joinWorkspacePath(parentPath, name) {
   return parentPath ? `${parentPath}/${name}` : name;
 }
 
+function workspacePathDirectory(path) {
+  const parts = String(path || "").split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
 function pathDepth(path) {
   return String(path || "").split("/").filter(Boolean).length - 1;
 }
@@ -1491,7 +1497,7 @@ function renderWorkspaceFiles() {
       name.className = "workspace-file-name";
       name.dataset.action = "open";
       name.title = entry.path;
-      name.textContent = entry.name;
+      name.textContent = workspaceEntryDisplayName(entry);
 
       const actions = document.createElement("div");
       actions.className = "workspace-file-actions";
@@ -1585,6 +1591,10 @@ async function refreshWorkspaceFiles() {
 
 function workspaceFileByName(name) {
   return workspaceFiles.find((file) => file.path === name || file.name === name);
+}
+
+function workspaceEntryDisplayName(entry) {
+  return entry?.title || entry?.preview || entry?.name || "未命名思维导图";
 }
 
 function safeFileBaseName(value) {
@@ -1701,10 +1711,12 @@ async function openWorkspaceMapFile(name, { fromLinkNodeId = null, restore = fal
 function linkSelectedNodeToWorkspaceFile(name) {
   const node = getNode(selectedId);
   if (!node) return;
+  const entry = workspaceFileByName(name);
+  const displayName = workspaceEntryDisplayName(entry) || name;
   pushHistory();
-  node.mapLink = { fileName: name, name };
+  node.mapLink = { fileName: name, name: displayName };
   render();
-  showStatus(`已将“${node.text || "主题"}”链接到 ${name}`, 2200);
+  showStatus(`已将“${node.text || "主题"}”链接到 ${displayName}`, 2200);
 }
 
 function ensureNodeLinkMenu() {
@@ -1732,12 +1744,14 @@ function renderNodeLinkMenu(nodeId) {
   menu.append(title);
 
   if (isLinkedNode(node)) {
+    const linkedEntry = workspaceFileByName(node.mapLink.fileName || node.mapLink.name);
+    const linkedDisplayName = workspaceEntryDisplayName(linkedEntry) || node.mapLink.name || node.mapLink.fileName;
     const current = document.createElement("button");
     current.type = "button";
     current.className = "node-link-menu-item";
     current.dataset.action = "open-linked";
     current.dataset.nodeId = nodeId;
-    current.textContent = `打开当前链接：${node.mapLink.name || node.mapLink.fileName}`;
+    current.textContent = `打开当前链接：${linkedDisplayName}`;
     const unlink = document.createElement("button");
     unlink.type = "button";
     unlink.className = "node-link-menu-item danger";
@@ -1780,7 +1794,7 @@ function renderNodeLinkMenu(nodeId) {
         item.dataset.nodeId = nodeId;
         item.dataset.name = entry.path;
         item.style.setProperty("--tree-depth", depth);
-        item.textContent = entry.name;
+        item.textContent = workspaceEntryDisplayName(entry);
         item.title = entry.path;
         menu.append(item);
       });
@@ -2123,7 +2137,7 @@ function renderHomeList() {
     const title = document.createElement("strong");
     title.textContent = item.title || "未命名思维导图";
     const meta = document.createElement("span");
-    meta.textContent = `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${item.path || "工作目录"}`;
+    meta.textContent = `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${workspacePathDirectory(item.path) || "工作目录"}`;
     const preview = document.createElement("small");
     preview.textContent = item.preview || "主题";
 
