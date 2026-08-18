@@ -12,6 +12,11 @@ const WORKSPACE_COLLAPSED_KEY = "zhitu.workspaceCollapsed.v1";
 const WORKSPACE_CURRENT_FILE_KEY = "zhitu.workspaceCurrentFile.v1";
 const WORKSPACE_FILE_EXTENSIONS = [".mindmap.json", ".json"];
 const AUTOSAVE_INTERVAL = 5000;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 1.6;
+const BUTTON_ZOOM_STEP = 0.1;
+const WHEEL_ZOOM_STEP = 0.08;
+const KEYBOARD_ZOOM_STEP = 0.04;
 const DEFAULT_DOCUMENT_TITLE = "未命名思维导图";
 const NODE_WIDTH_RULES = {
   root: { min: 300, max: 540, seed: 300, padding: 60, fontSize: 24, fontWeight: 750 },
@@ -128,6 +133,8 @@ let searchState = {
   active: null,
   jumpArmed: false,
 };
+const activeCanvasTouches = new Map();
+let touchCanvasState = null;
 
 const viewport = document.querySelector("#canvas-viewport");
 const stage = document.querySelector("#mindmap-stage");
@@ -1246,9 +1253,25 @@ function redo() {
 }
 
 function setZoom(nextZoom) {
-  zoom = Math.min(1.6, Math.max(0.5, nextZoom));
+  zoom = clamp(nextZoom, ZOOM_MIN, ZOOM_MAX);
   applyTransform();
   markSaving();
+}
+
+function setZoomAt(nextZoom, clientX, clientY, { mark = true } = {}) {
+  const next = clamp(nextZoom, ZOOM_MIN, ZOOM_MAX);
+  if (next === zoom) return;
+  const viewportRect = viewport.getBoundingClientRect();
+  const centerX = viewportRect.left + viewportRect.width / 2;
+  const centerY = viewportRect.top + viewportRect.height / 2;
+  const worldX = (clientX - centerX - pan.x) / zoom;
+  const worldY = (clientY - centerY - pan.y) / zoom;
+  zoom = next;
+  pan.x = clientX - centerX - worldX * zoom;
+  pan.y = clientY - centerY - worldY * zoom;
+  applyTransform();
+  if (mark) markSaving();
+  else autosaveDirty = true;
 }
 
 function fitCanvas() {
@@ -2691,7 +2714,15 @@ document.addEventListener("keydown", (event) => {
   if (!command) return;
   const key = event.key.toLowerCase();
   const editingText = editingId || event.target.matches("input, [contenteditable='true']");
-  if (key === "s") {
+  if (!editingText && (key === "=" || key === "+" || key === "-")) {
+    event.preventDefault();
+    const rect = viewport.getBoundingClientRect();
+    const direction = key === "-" ? -1 : 1;
+    setZoomAt(zoom + direction * KEYBOARD_ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  } else if (!editingText && key === "0") {
+    event.preventDefault();
+    fitCanvas();
+  } else if (key === "s") {
     event.preventDefault();
     saveProject();
   } else if (key === "o") {
@@ -2724,8 +2755,8 @@ document.querySelector("#edit-button").addEventListener("click", () => beginEdit
 document.querySelector("#delete-button").addEventListener("click", deleteSelected);
 copyButton.addEventListener("click", copySelectedSubtree);
 pasteButton.addEventListener("click", () => pasteSubtree());
-document.querySelector("#zoom-in").addEventListener("click", () => setZoom(zoom + 0.1));
-document.querySelector("#zoom-out").addEventListener("click", () => setZoom(zoom - 0.1));
+document.querySelector("#zoom-in").addEventListener("click", () => setZoom(zoom + BUTTON_ZOOM_STEP));
+document.querySelector("#zoom-out").addEventListener("click", () => setZoom(zoom - BUTTON_ZOOM_STEP));
 document.querySelector("#fit-button").addEventListener("click", fitCanvas);
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
@@ -2954,7 +2985,7 @@ viewport.addEventListener("wheel", (event) => {
   viewport.scrollLeft = 0;
   viewport.scrollTop = 0;
   if (event.ctrlKey) {
-    setZoom(zoom + (event.deltaY > 0 ? -0.08 : 0.08));
+    setZoomAt(zoom + (event.deltaY > 0 ? -WHEEL_ZOOM_STEP : WHEEL_ZOOM_STEP), event.clientX, event.clientY);
     return;
   }
   if (event.shiftKey && Math.abs(event.deltaX) < 1) {
@@ -2969,6 +3000,174 @@ viewport.addEventListener("wheel", (event) => {
 
 let dragStart = null;
 let marqueeState = null;
+
+function canvasTouchPoint(event) {
+  return {
+    id: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    targetId: event.target.closest(".topic-node")?.dataset.id || null,
+  };
+}
+
+function touchPair() {
+  return [...activeCanvasTouches.values()].slice(0, 2);
+}
+
+function touchDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function touchCenter(a, b) {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+  };
+}
+
+function cancelCanvasMarquee() {
+  marqueeState = null;
+  selectionMarquee.hidden = true;
+  viewport.classList.remove("selecting");
+}
+
+function cancelCanvasMousePan() {
+  dragStart = null;
+  viewport.classList.remove("panning");
+}
+
+function safeSetPointerCapture(element, pointerId) {
+  try {
+    element.setPointerCapture(pointerId);
+  } catch {
+    // Some browsers reject synthetic or interrupted touch pointers.
+  }
+}
+
+function safeReleasePointerCapture(element, pointerId) {
+  try {
+    if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+  } catch {
+    // Ignore stale pointer captures.
+  }
+}
+
+function startTouchGesture(event) {
+  if (event.target.closest(".zoom-controls, .map-return-button")) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  activeCanvasTouches.set(event.pointerId, canvasTouchPoint(event));
+  safeSetPointerCapture(viewport, event.pointerId);
+  cancelCanvasMarquee();
+  cancelCanvasMousePan();
+
+  const touches = touchPair();
+  if (touches.length >= 2) {
+    const [first, second] = touches;
+    const center = touchCenter(first, second);
+    touchCanvasState = {
+      mode: "pinch",
+      startDistance: Math.max(1, touchDistance(first, second)),
+      startZoom: zoom,
+      worldX: (center.x - (viewport.getBoundingClientRect().left + viewport.clientWidth / 2) - pan.x) / zoom,
+      worldY: (center.y - (viewport.getBoundingClientRect().top + viewport.clientHeight / 2) - pan.y) / zoom,
+    };
+    viewport.classList.add("panning");
+  } else {
+    const touch = touches[0];
+    touchCanvasState = {
+      mode: "pan",
+      pointerId: event.pointerId,
+      startX: touch.x,
+      startY: touch.y,
+      panX: pan.x,
+      panY: pan.y,
+      moved: false,
+      targetId: touch.targetId,
+    };
+    viewport.classList.add("panning");
+  }
+  return true;
+}
+
+function updateTouchGesture(event) {
+  if (!activeCanvasTouches.has(event.pointerId)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const previous = activeCanvasTouches.get(event.pointerId);
+  activeCanvasTouches.set(event.pointerId, { ...previous, x: event.clientX, y: event.clientY });
+  const touches = touchPair();
+
+  if (touches.length >= 2) {
+    const [first, second] = touches;
+    if (!touchCanvasState || touchCanvasState.mode !== "pinch") {
+      const center = touchCenter(first, second);
+      touchCanvasState = {
+        mode: "pinch",
+        startDistance: Math.max(1, touchDistance(first, second)),
+        startZoom: zoom,
+        worldX: (center.x - (viewport.getBoundingClientRect().left + viewport.clientWidth / 2) - pan.x) / zoom,
+        worldY: (center.y - (viewport.getBoundingClientRect().top + viewport.clientHeight / 2) - pan.y) / zoom,
+      };
+    }
+    const center = touchCenter(first, second);
+    const viewportRect = viewport.getBoundingClientRect();
+    zoom = clamp(touchCanvasState.startZoom * (touchDistance(first, second) / touchCanvasState.startDistance), ZOOM_MIN, ZOOM_MAX);
+    pan.x = center.x - (viewportRect.left + viewportRect.width / 2) - touchCanvasState.worldX * zoom;
+    pan.y = center.y - (viewportRect.top + viewportRect.height / 2) - touchCanvasState.worldY * zoom;
+    applyTransform();
+    autosaveDirty = true;
+    return true;
+  }
+
+  if (touchCanvasState?.mode === "pan" && touchCanvasState.pointerId === event.pointerId) {
+    const dx = event.clientX - touchCanvasState.startX;
+    const dy = event.clientY - touchCanvasState.startY;
+    if (Math.hypot(dx, dy) <= 5 && !touchCanvasState.moved) return true;
+    touchCanvasState.moved = true;
+    pan.x = touchCanvasState.panX + dx;
+    pan.y = touchCanvasState.panY + dy;
+    applyTransform();
+    autosaveDirty = true;
+    return true;
+  }
+  return true;
+}
+
+function finishTouchGesture(event) {
+  if (!activeCanvasTouches.has(event.pointerId)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const endedTouch = activeCanvasTouches.get(event.pointerId);
+  activeCanvasTouches.delete(event.pointerId);
+  safeReleasePointerCapture(viewport, event.pointerId);
+
+  if (!activeCanvasTouches.size) {
+    const wasTap = event.type !== "pointercancel" && touchCanvasState?.mode === "pan" && !touchCanvasState.moved && endedTouch?.targetId;
+    if (wasTap) selectNode(endedTouch.targetId);
+    const changedView = touchCanvasState?.mode === "pinch" || touchCanvasState?.moved;
+    touchCanvasState = null;
+    viewport.classList.remove("panning");
+    if (changedView) markSaving();
+    return true;
+  }
+
+  const touches = touchPair();
+  if (touches.length === 1) {
+    const touch = touches[0];
+    touchCanvasState = {
+      mode: "pan",
+      pointerId: touch.id,
+      startX: touch.x,
+      startY: touch.y,
+      panX: pan.x,
+      panY: pan.y,
+      moved: true,
+      targetId: touch.targetId,
+    };
+  }
+  return true;
+}
 
 function startCanvasPan(event) {
   event.preventDefault();
@@ -2985,6 +3184,7 @@ function startCanvasPan(event) {
 }
 
 viewport.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "touch" && startTouchGesture(event)) return;
   if (event.target.closest(".map-return-button")) return;
   const topic = event.target.closest(".topic-node");
   if (event.button === 2 && event.shiftKey && topic) {
@@ -3022,6 +3222,7 @@ viewport.addEventListener("pointerdown", (event) => {
 }, true);
 
 viewport.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch" && updateTouchGesture(event)) return;
   if (dragStart && dragStart.pointerId === event.pointerId) {
     pan.x = dragStart.panX + event.clientX - dragStart.x;
     pan.y = dragStart.panY + event.clientY - dragStart.y;
@@ -3059,6 +3260,7 @@ viewport.addEventListener("pointermove", (event) => {
 });
 
 function finishCanvasPointer(event) {
+  if (event.pointerType === "touch" && finishTouchGesture(event)) return;
   if (dragStart && dragStart.pointerId === event.pointerId) {
     dragStart = null;
     viewport.classList.remove("panning");
