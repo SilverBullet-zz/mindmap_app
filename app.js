@@ -1573,6 +1573,10 @@ function safeFileBaseName(value) {
   return cleaned || "mindmap";
 }
 
+function defaultFileBaseName() {
+  return safeFileBaseName(rootTopicTitle() || "主题");
+}
+
 async function uniqueWorkspaceFileName(baseName) {
   const base = safeFileBaseName(baseName);
   const existing = new Set(workspaceFiles.map((file) => file.path.toLocaleLowerCase()));
@@ -1618,7 +1622,7 @@ async function autosaveWorkspace({ silent = true } = {}) {
     try {
       const data = projectData();
       data.localId = currentLocalId;
-      const name = currentWorkspaceFileName || await uniqueWorkspaceFileName(data.title || rootTopicTitle());
+      const name = currentWorkspaceFileName || await uniqueWorkspaceFileName(defaultFileBaseName());
       const saved = await writeWorkspaceProjectFile(name, data);
       if (!saved) return autosaveLocalStorage({ silent });
       autosaveDirty = false;
@@ -3231,9 +3235,7 @@ function createExportCanvas({ maxPixelRatio = 3, maxLongEdge = 7000 } = {}) {
 }
 
 function exportFilename(extension) {
-  const title = document.querySelector("#document-title").value.trim() || "思维导图";
-  const safeTitle = title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
-  return `${safeTitle}.${extension}`;
+  return `${defaultFileBaseName()}.${extension}`;
 }
 
 function downloadBlob(blob, filename) {
