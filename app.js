@@ -836,6 +836,7 @@ function selectNode(id) {
 function beginEditing(id = selectedId, selectAll = false) {
   const node = getNode(id);
   if (!node) return;
+  setWorkspaceCollapsed(true);
   selectedId = id;
   selectedIds = new Set([id]);
   editingId = id;
@@ -1387,6 +1388,16 @@ function updateWorkspaceUi() {
     document.documentElement.style.setProperty("--workspace-sidebar-width", `${width}px`);
   }
   renderWorkspaceFiles();
+}
+
+function setWorkspaceCollapsed(collapsed, { persist = true } = {}) {
+  if (!workspaceSidebar || !workspaceCollapseButton) return;
+  if (persist && localStorageAvailable()) {
+    localStorage.setItem(WORKSPACE_COLLAPSED_KEY, String(collapsed));
+  }
+  workspaceSidebar.classList.toggle("collapsed", collapsed);
+  workspaceCollapseButton.title = collapsed ? "展开工作目录" : "收起工作目录";
+  workspaceCollapseButton.setAttribute("aria-label", workspaceCollapseButton.title);
 }
 
 async function initializeWorkspaceDirectory() {
@@ -2843,9 +2854,7 @@ mapReturnButton.addEventListener("click", () => {
   });
 });
 workspaceCollapseButton.addEventListener("click", () => {
-  const collapsed = !workspaceSidebar.classList.contains("collapsed");
-  if (localStorageAvailable()) localStorage.setItem(WORKSPACE_COLLAPSED_KEY, String(collapsed));
-  updateWorkspaceUi();
+  setWorkspaceCollapsed(!workspaceSidebar.classList.contains("collapsed"));
 });
 workspaceResizer.addEventListener("pointerdown", (event) => {
   if (workspaceSidebar.classList.contains("collapsed")) return;
