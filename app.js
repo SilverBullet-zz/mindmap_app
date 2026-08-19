@@ -2727,8 +2727,11 @@ document.addEventListener("keydown", (event) => {
   }
   if (!command) return;
   const key = event.key.toLowerCase();
-  const editingText = editingId || event.target.matches("input, [contenteditable='true']");
-  if (!editingText && (key === "=" || key === "+" || key === "-")) {
+  const editingText = editingId || event.target.matches("input, textarea, select, [contenteditable='true']");
+  if (!editingText && key === "f") {
+    event.preventDefault();
+    focusSearchMode();
+  } else if (!editingText && (key === "=" || key === "+" || key === "-")) {
     event.preventDefault();
     const rect = viewport.getBoundingClientRect();
     const direction = key === "-" ? -1 : 1;
