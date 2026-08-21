@@ -131,6 +131,7 @@ let workspaceConflictFileName = null;
 let autosaveWorkspacePromise = null;
 let autosaveWorkspaceQueued = false;
 let workspaceRefreshTimer = null;
+let workspaceDragFilePath = "";
 let mapReturnStack = [];
 let titleEditedByUser = false;
 let nodeLinkMenu = null;
@@ -1886,6 +1887,7 @@ function renderWorkspaceFiles() {
         row.type = "button";
         row.className = "workspace-tree-row folder";
         row.dataset.action = "toggle-folder";
+        row.dataset.dropFolder = entry.path;
         row.dataset.path = entry.path;
         row.style.setProperty("--tree-depth", depth);
         row.setAttribute("aria-expanded", String(expandedWorkspaceFolders.has(entry.path)));
@@ -1905,6 +1907,7 @@ function renderWorkspaceFiles() {
       const item = document.createElement("div");
       item.className = `workspace-tree-row file${isCurrent ? " current" : ""}`;
       item.dataset.name = entry.path;
+      item.draggable = true;
       item.style.setProperty("--tree-depth", depth);
 
       const name = document.createElement("button");
@@ -1927,7 +1930,12 @@ function renderWorkspaceFiles() {
       open.className = "text-button";
       open.dataset.action = "open";
       open.textContent = "打开";
-      actions.append(open);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "text-button danger";
+      remove.dataset.action = "delete";
+      remove.textContent = "删除";
+      actions.append(open, remove);
       item.append(name, actions);
       workspaceFileList.append(item);
     });
@@ -1965,7 +1973,7 @@ async function refreshWorkspaceFiles() {
             handle,
             children: await scanDirectory(handle, path),
           };
-          if (directoryEntry.children.length) entries.push(directoryEntry);
+          entries.push(directoryEntry);
           continue;
         }
         if (!isJsonFileName(name)) continue;
@@ -2145,6 +2153,27 @@ async function getWorkspaceFileHandleByPath(path, { create = false } = {}) {
     directory = await directory.getDirectoryHandle(folder, { create });
   }
   return directory.getFileHandle(parts.at(-1), { create });
+}
+
+async function getWorkspaceDirectoryHandleByPath(path, { create = false } = {}) {
+  if (!workspaceDirectoryHandle) return null;
+  const parts = String(path || "").split("/").filter(Boolean);
+  let directory = workspaceDirectoryHandle;
+  for (const folder of parts) {
+    directory = await directory.getDirectoryHandle(folder, { create });
+  }
+  return directory;
+}
+
+function splitWorkspaceMapFileName(fileName) {
+  const name = workspacePathFileName(fileName);
+  if (name.toLocaleLowerCase().endsWith(".mindmap.json")) {
+    return { base: name.slice(0, -".mindmap.json".length), extension: ".mindmap.json" };
+  }
+  if (name.toLocaleLowerCase().endsWith(".json")) {
+    return { base: name.slice(0, -".json".length), extension: ".json" };
+  }
+  return { base: name || "mindmap", extension: ".mindmap.json" };
 }
 
 function imageExtensionForFile(file) {
@@ -2455,6 +2484,62 @@ async function removeWorkspaceFileByPath(path) {
   }
   await directory.removeEntry(parts.at(-1));
   return true;
+}
+
+async function moveWorkspaceMapFile(sourcePath, targetDirectoryPath = "") {
+  let sourceName = sourcePath;
+  if (sourceName === currentWorkspaceFileName && autosaveDirty) {
+    const saved = await autosaveLocal({ silent: false });
+    if (!saved) return false;
+    sourceName = currentWorkspaceFileName;
+  }
+  const sourceEntry = workspaceFileByName(sourceName);
+  if (!workspaceDirectoryHandle || !sourceEntry) {
+    showStatus("工作目录中找不到此文件", 2200);
+    await refreshWorkspaceFiles();
+    return false;
+  }
+  const normalizedTargetDirectory = String(targetDirectoryPath || "").split("/").filter(Boolean).join("/");
+  const sourceDirectory = workspacePathDirectory(sourceEntry.path);
+  if (sourceDirectory === normalizedTargetDirectory) {
+    showStatus("文件已在此文件夹中", 1800);
+    return false;
+  }
+  if (!await ensureWorkspacePermission("readwrite")) {
+    showStatus("需要授权工作目录", 2200);
+    return false;
+  }
+  try {
+    const sourceFile = await sourceEntry.handle.getFile();
+    const targetDirectory = await getWorkspaceDirectoryHandleByPath(normalizedTargetDirectory, { create: false });
+    if (!targetDirectory) {
+      showStatus("找不到目标文件夹", 2200);
+      return false;
+    }
+    const { base, extension } = splitWorkspaceMapFileName(sourceEntry.name);
+    const targetName = await uniqueDirectoryFileName(targetDirectory, base, extension);
+    const targetHandle = await targetDirectory.getFileHandle(targetName, { create: true });
+    const writable = await targetHandle.createWritable();
+    await writable.write(await sourceFile.arrayBuffer());
+    await writable.close();
+    await removeWorkspaceFileByPath(sourceEntry.path);
+
+    const targetPath = joinWorkspacePath(normalizedTargetDirectory, targetName);
+    if (currentWorkspaceFileName === sourceEntry.path) {
+      currentWorkspaceFileName = targetPath;
+      currentWorkspaceFileModifiedAt = (await targetHandle.getFile()).lastModified || Date.now();
+      if (localStorageAvailable()) localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, targetPath);
+    }
+    expandedWorkspaceFolders.add(normalizedTargetDirectory);
+    await refreshWorkspaceFiles();
+    showStatus(`已移动到 ${normalizedTargetDirectory || "工作目录"}`, 2200);
+    return true;
+  } catch (error) {
+    console.error(error);
+    showStatus("移动失败，原文件已保留", 2600);
+    await refreshWorkspaceFiles();
+    return false;
+  }
 }
 
 async function workspaceSaveTargetName() {
@@ -4250,6 +4335,15 @@ openLocalButton.addEventListener("click", openProjectFromPicker);
 chooseWorkspaceFolderButton.addEventListener("click", chooseWorkspaceDirectory);
 openWorkspaceFileButton.addEventListener("click", openProjectFromPicker);
 refreshWorkspaceFilesButton.addEventListener("click", () => refreshWorkspaceFiles());
+function clearWorkspaceDropState() {
+  workspaceFileList.classList.remove("drop-root");
+  workspaceFileList.querySelectorAll(".workspace-tree-row.drop-target").forEach((row) => row.classList.remove("drop-target"));
+}
+
+function workspaceDropTargetFolder(event) {
+  return event.target.closest("[data-drop-folder]")?.dataset.dropFolder || "";
+}
+
 workspaceFileList.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   const folder = event.target.closest("[data-action='toggle-folder']");
@@ -4265,7 +4359,44 @@ workspaceFileList.addEventListener("click", (event) => {
   if (action === "open") {
     mapReturnStack = [];
     openWorkspaceMapFile(item.dataset.name);
+  } else if (action === "delete") {
+    deleteWorkspaceMapFile(item.dataset.name);
   }
+});
+workspaceFileList.addEventListener("dragstart", (event) => {
+  const item = event.target.closest(".workspace-tree-row.file");
+  if (!item) return;
+  workspaceDragFilePath = item.dataset.name || "";
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", workspaceDragFilePath);
+  item.classList.add("dragging");
+});
+workspaceFileList.addEventListener("dragend", () => {
+  workspaceDragFilePath = "";
+  clearWorkspaceDropState();
+  workspaceFileList.querySelectorAll(".workspace-tree-row.dragging").forEach((row) => row.classList.remove("dragging"));
+});
+workspaceFileList.addEventListener("dragover", (event) => {
+  const sourcePath = workspaceDragFilePath || event.dataTransfer.getData("text/plain");
+  if (!sourcePath || !workspaceFileByName(sourcePath)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  clearWorkspaceDropState();
+  const folder = event.target.closest("[data-drop-folder]");
+  if (folder) folder.classList.add("drop-target");
+  else workspaceFileList.classList.add("drop-root");
+});
+workspaceFileList.addEventListener("dragleave", (event) => {
+  if (!workspaceFileList.contains(event.relatedTarget)) clearWorkspaceDropState();
+});
+workspaceFileList.addEventListener("drop", async (event) => {
+  const sourcePath = workspaceDragFilePath || event.dataTransfer.getData("text/plain");
+  if (!sourcePath || !workspaceFileByName(sourcePath)) return;
+  event.preventDefault();
+  const targetFolder = workspaceDropTargetFolder(event);
+  clearWorkspaceDropState();
+  workspaceDragFilePath = "";
+  await moveWorkspaceMapFile(sourcePath, targetFolder);
 });
 document.addEventListener("click", (event) => {
   if (event.target.closest(".node-link-menu")) return;

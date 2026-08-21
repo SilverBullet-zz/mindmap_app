@@ -850,8 +850,15 @@ textarea:focus-visible {
   gap: 6px;
   min-width: 0;
   max-height: min(42vh, 360px);
+  min-height: 42px;
   overflow: auto;
   padding-right: 2px;
+}
+
+.workspace-file-list.drop-root {
+  outline: 2px dashed #79cdb7;
+  outline-offset: 3px;
+  background: rgba(229, 248, 240, 0.45);
 }
 
 .workspace-file-empty {
@@ -903,6 +910,12 @@ textarea:focus-visible {
   background: rgba(229, 245, 236, 0.88);
 }
 
+.workspace-tree-row.folder.drop-target {
+  border-color: #5bbda5;
+  background: rgba(210, 245, 231, 0.95);
+  box-shadow: 0 0 0 3px rgba(88, 188, 162, 0.14);
+}
+
 .workspace-tree-row.file {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -912,6 +925,10 @@ textarea:focus-visible {
   border-color: #82cdbb;
   background: rgba(222, 246, 237, 0.86);
   box-shadow: 0 8px 24px rgba(79, 151, 132, 0.12);
+}
+
+.workspace-tree-row.file.dragging {
+  opacity: 0.58;
 }
 
 .tree-chevron {
