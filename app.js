@@ -1888,8 +1888,9 @@ function renderWorkspaceFiles() {
         return;
       }
 
+      const isCurrent = entry.path === currentWorkspaceFileName;
       const item = document.createElement("div");
-      item.className = "workspace-tree-row file";
+      item.className = `workspace-tree-row file${isCurrent ? " current" : ""}`;
       item.dataset.name = entry.path;
       item.style.setProperty("--tree-depth", depth);
 
@@ -1902,17 +1903,18 @@ function renderWorkspaceFiles() {
 
       const actions = document.createElement("div");
       actions.className = "workspace-file-actions";
+      if (isCurrent) {
+        const current = document.createElement("span");
+        current.className = "workspace-current-badge";
+        current.textContent = "当前";
+        actions.append(current);
+      }
       const open = document.createElement("button");
       open.type = "button";
       open.className = "text-button";
       open.dataset.action = "open";
       open.textContent = "打开";
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = "text-button";
-      link.dataset.action = "link";
-      link.textContent = "链接";
-      actions.append(open, link);
+      actions.append(open);
       item.append(name, actions);
       workspaceFileList.append(item);
     });
@@ -3873,8 +3875,6 @@ workspaceFileList.addEventListener("click", (event) => {
   if (action === "open") {
     mapReturnStack = [];
     openWorkspaceMapFile(item.dataset.name);
-  } else if (action === "link") {
-    linkSelectedNodeToWorkspaceFile(item.dataset.name);
   }
 });
 document.addEventListener("click", (event) => {
