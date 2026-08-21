@@ -130,6 +130,7 @@ let workspaceConflictPaused = false;
 let workspaceConflictFileName = null;
 let autosaveWorkspacePromise = null;
 let autosaveWorkspaceQueued = false;
+let workspaceRefreshTimer = null;
 let mapReturnStack = [];
 let titleEditedByUser = false;
 let nodeLinkMenu = null;
@@ -365,6 +366,8 @@ function currentMapSnapshot({ focusNodeId = selectedId } = {}) {
   return {
     data: normalizeProject(projectData()),
     localId: currentLocalId,
+    workspaceFileName: currentWorkspaceFileName,
+    workspaceModifiedAt: currentWorkspaceFileModifiedAt,
     selectedId: getNode(focusNodeId) ? focusNodeId : selectedId,
     selectedIds: getNode(focusNodeId) ? [focusNodeId] : [...selectedIds],
     zoom,
@@ -374,6 +377,14 @@ function currentMapSnapshot({ focusNodeId = selectedId } = {}) {
 
 function restoreMapSnapshot(snapshot) {
   if (!snapshot?.data) return;
+  currentWorkspaceFileName = snapshot.workspaceFileName || null;
+  currentWorkspaceFileModifiedAt = snapshot.workspaceModifiedAt || 0;
+  workspaceConflictPaused = false;
+  workspaceConflictFileName = null;
+  if (localStorageAvailable()) {
+    if (currentWorkspaceFileName) localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, currentWorkspaceFileName);
+    else localStorage.removeItem(WORKSPACE_CURRENT_FILE_KEY);
+  }
   applyProjectData(snapshot.data, {
     localId: snapshot.localId || currentLocalId,
     status: "已返回链接前位置",
@@ -1458,8 +1469,13 @@ function deleteSelected() {
   const roots = selectionRootIds({ excludeRoot: true });
   if (!roots.length) return;
   const fallbackId = getNode(roots[0])?.parentId || "root";
-  pushHistory();
   const removeIds = new Set(roots.flatMap((id) => [id, ...descendantsOf(id)]));
+  const removeCount = removeIds.size;
+  const riskyDelete = nodes.length >= 12 && removeCount >= Math.max(5, Math.ceil(nodes.length * 0.35));
+  if (riskyDelete && !window.confirm(`将删除 ${removeCount} 个主题。\n\n这属于大规模删除。删除后可立即按 Ctrl+Z 撤销；保存前也会触发文件保护。确认继续吗？`)) {
+    return;
+  }
+  pushHistory();
   selectedId = fallbackId;
   selectedIds = new Set([fallbackId]);
   editingId = null;
@@ -1920,6 +1936,12 @@ async function refreshWorkspaceFiles() {
   }
 }
 
+function scheduleWorkspaceRefresh(delay = 300) {
+  if (!workspaceDirectoryHandle) return;
+  window.clearTimeout(workspaceRefreshTimer);
+  workspaceRefreshTimer = window.setTimeout(() => refreshWorkspaceFiles(), delay);
+}
+
 function workspaceFileByName(name) {
   return workspaceFiles.find((file) => file.path === name || file.name === name);
 }
@@ -2178,6 +2200,84 @@ function workspaceConflictError(conflict) {
   return error;
 }
 
+function workspaceWriteRiskError(risk) {
+  const error = new Error("WORKSPACE_WRITE_RISK");
+  Object.assign(error, risk);
+  return error;
+}
+
+function workspaceProjectSummary(raw) {
+  try {
+    if (!raw || raw.format !== "mindmap" || raw.version !== 1 || !Array.isArray(raw.nodes)) return null;
+    return {
+      localId: raw.localId || "",
+      title: String(raw.title || "").trim(),
+      rootText: String(raw.nodes.find((node) => node.id === "root")?.text || "").trim(),
+      nodeCount: raw.nodes.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function workspaceWriteRisk(handle, name, nextData) {
+  if (!handle || name !== currentWorkspaceFileName) return null;
+  let file;
+  let raw;
+  try {
+    file = await handle.getFile();
+    raw = JSON.parse(await file.text());
+  } catch {
+    return null;
+  }
+  const previous = workspaceProjectSummary(raw);
+  const next = workspaceProjectSummary(nextData);
+  if (!previous || !next) return null;
+
+  const nodeLoss = previous.nodeCount - next.nodeCount;
+  const massDelete = previous.nodeCount >= 10 && nodeLoss >= Math.max(5, Math.ceil(previous.nodeCount * 0.35));
+  const differentMap = Boolean(previous.localId && next.localId && previous.localId !== next.localId);
+  if (!massDelete && !differentMap) return null;
+
+  return {
+    fileName: name,
+    previousRaw: raw,
+    previousModifiedAt: file.lastModified || 0,
+    previous,
+    next,
+    massDelete,
+    differentMap,
+    nodeLoss,
+  };
+}
+
+async function writeWorkspaceTrashBackup(name, raw, reason = "overwrite") {
+  if (!workspaceDirectoryHandle || !raw) return null;
+  const data = normalizeProject(raw);
+  const trashDirectory = await workspaceDirectoryHandle.getDirectoryHandle(WORKSPACE_TRASH_DIR, { create: true });
+  const trashName = await uniqueDirectoryFileName(
+    trashDirectory,
+    `${Date.now()} ${safeFileBaseName(data.title || name)} ${reason === "overwrite" ? "覆盖前备份" : "备份"}`,
+    ".mindmap-trash.json"
+  );
+  const trashHandle = await trashDirectory.getFileHandle(trashName, { create: true });
+  const payload = {
+    format: WORKSPACE_TRASH_FORMAT,
+    version: 1,
+    deletedAt: new Date().toISOString(),
+    originalPath: name,
+    originalName: String(name || "").split("/").filter(Boolean).at(-1) || name,
+    title: data.title || raw.title || "未命名思维导图",
+    updatedAt: raw.savedAt || "",
+    reason,
+    data: raw,
+  };
+  const writable = await trashHandle.createWritable();
+  await writable.write(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" }));
+  await writable.close();
+  return trashName;
+}
+
 async function writeWorkspaceProjectFile(name, data, { allowOverwrite = false } = {}) {
   if (!workspaceDirectoryHandle) return false;
   if (!await ensureWorkspacePermission("readwrite")) return false;
@@ -2187,6 +2287,15 @@ async function writeWorkspaceProjectFile(name, data, { allowOverwrite = false } 
     workspaceConflictPaused = true;
     workspaceConflictFileName = name;
     throw workspaceConflictError(conflict);
+  }
+  const risk = await workspaceWriteRisk(handle, name, data);
+  if (risk && !allowOverwrite) {
+    workspaceConflictPaused = true;
+    workspaceConflictFileName = name;
+    throw workspaceWriteRiskError(risk);
+  }
+  if (risk && allowOverwrite) {
+    await writeWorkspaceTrashBackup(name, risk.previousRaw, "overwrite");
   }
   const writable = await handle.createWritable();
   await writable.write(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }));
@@ -2215,10 +2324,20 @@ function showWorkspaceConflictDialog(error) {
   workspaceConflictPaused = true;
   workspaceConflictFileName = error?.fileName || currentWorkspaceFileName;
   if (!workspaceConflictOverlay || !workspaceConflictMessage) return;
-  workspaceConflictMessage.textContent =
-    `“${workspaceConflictFileName || "当前文件"}”在你打开后被另一个窗口或页面修改过。` +
-    `外部修改时间：${formatConflictTime(error?.externalModifiedAt)}。` +
-    "自动保存已暂停，避免覆盖那个版本。";
+  if (error?.message === "WORKSPACE_WRITE_RISK") {
+    const reasons = [
+      error.differentMap ? "将用另一个思维导图的内容覆盖当前文件" : "",
+      error.massDelete ? `将减少 ${error.nodeLoss} 个主题` : "",
+    ].filter(Boolean).join("；");
+    workspaceConflictMessage.textContent =
+      `“${workspaceConflictFileName || "当前文件"}”即将发生高风险保存：${reasons || "内容变化较大"}。` +
+      "自动保存已暂停。你可以先按 Ctrl+Z 撤销，或另存为副本；如果选择覆盖，旧版本会先备份到垃圾桶。";
+  } else {
+    workspaceConflictMessage.textContent =
+      `“${workspaceConflictFileName || "当前文件"}”在你打开后被另一个窗口或页面修改过。` +
+      `外部修改时间：${formatConflictTime(error?.externalModifiedAt)}。` +
+      "自动保存已暂停，避免覆盖那个版本。";
+  }
   workspaceConflictOverlay.hidden = false;
   conflictSaveCopyButton?.focus({ preventScroll: true });
 }
@@ -2301,10 +2420,12 @@ async function autosaveWorkspace({ silent = true } = {}) {
       await refreshWorkspaceFiles();
       return true;
     } catch (error) {
-      if (error?.message === "WORKSPACE_FILE_CONFLICT") {
+      if (error?.message === "WORKSPACE_FILE_CONFLICT" || error?.message === "WORKSPACE_WRITE_RISK") {
         autosaveDirty = true;
         window.clearTimeout(markSaving.timer);
-        document.querySelector(".save-state").textContent = "检测到文件冲突，已暂停自动保存";
+        document.querySelector(".save-state").textContent = error.message === "WORKSPACE_WRITE_RISK"
+          ? "检测到高风险保存，已暂停自动保存"
+          : "检测到文件冲突，已暂停自动保存";
         showWorkspaceConflictDialog(error);
         return false;
       }
@@ -2323,6 +2444,13 @@ async function autosaveWorkspace({ silent = true } = {}) {
 }
 
 async function openWorkspaceMapFile(name, { fromLinkNodeId = null, restore = false } = {}) {
+  if (!restore && currentWorkspaceFileName && currentWorkspaceFileName !== name && autosaveDirty) {
+    const saved = await autosaveLocal({ silent: false });
+    if (!saved) {
+      showStatus("当前文件未安全保存，已取消跳转", 2600);
+      return false;
+    }
+  }
   let entry = workspaceFileByName(name);
   if (!entry) {
     await refreshWorkspaceFiles();
@@ -4583,6 +4711,12 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("resize", () => {
   drawConnections();
   applyTransform();
+});
+
+window.addEventListener("focus", () => scheduleWorkspaceRefresh(250));
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleWorkspaceRefresh(250);
 });
 
 window.addEventListener("beforeunload", () => {
