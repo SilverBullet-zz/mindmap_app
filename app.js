@@ -1810,7 +1810,7 @@ function renderWorkspaceFiles() {
       if (entry.kind === "directory") {
         const row = document.createElement("button");
         row.type = "button";
-        row.className = "workspace-tree-row folder";
+        row.className = `workspace-tree-row folder${entry.children.length ? "" : " empty"}`;
         row.dataset.action = "toggle-folder";
         row.dataset.path = entry.path;
         row.style.setProperty("--tree-depth", depth);
@@ -1824,6 +1824,24 @@ function renderWorkspaceFiles() {
         row.append(chevron, label);
         workspaceFileList.append(row);
         if (expandedWorkspaceFolders.has(entry.path)) renderEntries(entry.children, depth + 1);
+        return;
+      }
+
+      if (entry.kind === "unsupported") {
+        const item = document.createElement("div");
+        item.className = "workspace-tree-row unsupported";
+        item.title = `${entry.path} 不是可打开的思维导图文件`;
+        item.style.setProperty("--tree-depth", depth);
+
+        const name = document.createElement("span");
+        name.className = "workspace-file-name unsupported";
+        name.textContent = entry.name;
+
+        const kind = document.createElement("span");
+        kind.className = "workspace-file-kind";
+        kind.textContent = "非 map";
+        item.append(name, kind);
+        workspaceFileList.append(item);
         return;
       }
 
@@ -1889,10 +1907,13 @@ async function refreshWorkspaceFiles() {
             handle,
             children: await scanDirectory(handle, path),
           };
-          if (directoryEntry.children.length) entries.push(directoryEntry);
+          entries.push(directoryEntry);
           continue;
         }
-        if (!isMindmapFileName(name)) continue;
+        if (!isMindmapFileName(name)) {
+          entries.push({ kind: "unsupported", name, path, handle });
+          continue;
+        }
         const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题" };
         try {
           const file = await handle.getFile();
@@ -1909,7 +1930,8 @@ async function refreshWorkspaceFiles() {
         entries.push(item);
       }
       entries.sort((a, b) => {
-        if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+        const order = { directory: 0, file: 1, unsupported: 2 };
+        if (a.kind !== b.kind) return (order[a.kind] ?? 9) - (order[b.kind] ?? 9);
         return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
       });
       return entries;
@@ -1948,6 +1970,12 @@ function workspaceFileByName(name) {
 
 function workspaceEntryDisplayName(entry) {
   return entry?.title || entry?.preview || entry?.name || "未命名思维导图";
+}
+
+function hasLinkableWorkspaceFile(entry) {
+  if (entry?.kind === "file") return true;
+  if (entry?.kind !== "directory") return false;
+  return entry.children.some((child) => hasLinkableWorkspaceFile(child));
 }
 
 async function scanWorkspaceTrash() {
@@ -2576,6 +2604,7 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
     const renderEntries = (entries, depth = 0) => {
       entries.forEach((entry) => {
         if (entry.kind === "directory") {
+          if (!hasLinkableWorkspaceFile(entry)) return;
           const folder = document.createElement("button");
           folder.type = "button";
           folder.className = "node-link-menu-item folder";
@@ -2589,6 +2618,7 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
           if (expandedWorkspaceFolders.has(entry.path)) renderEntries(entry.children, depth + 1);
           return;
         }
+        if (entry.kind !== "file") return;
         const item = document.createElement("button");
         item.type = "button";
         item.className = "node-link-menu-item";
@@ -2601,7 +2631,14 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
         menu.append(item);
       });
     };
-    renderEntries(workspaceTree);
+    const linkableTree = workspaceTree.filter((entry) => hasLinkableWorkspaceFile(entry));
+    if (linkableTree.length) renderEntries(linkableTree);
+    else {
+      const empty = document.createElement("div");
+      empty.className = "node-link-menu-empty";
+      empty.textContent = "工作目录没有可链接的 map 文件";
+      menu.append(empty);
+    }
   }
 
   const refresh = document.createElement("button");
