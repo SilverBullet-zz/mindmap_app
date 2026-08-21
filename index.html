@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#eefbf3" />
     <title>枝图 - 思维导图</title>
-    <link rel="stylesheet" href="./styles.css?v=35" />
+    <link rel="stylesheet" href="./styles.css?v=36" />
   </head>
   <body>
     <div class="app-shell">
@@ -32,6 +32,9 @@
         <div class="top-actions">
           <button class="secondary-button" id="home-button" type="button" title="工作目录首页" aria-label="工作目录首页">
             首页
+          </button>
+          <button class="secondary-button" id="compare-button" type="button" title="对比两个工作目录中的思维导图" aria-label="对比思维导图">
+            对比
           </button>
           <button class="secondary-button open-local-button" id="open-local-button" type="button" title="打开本地 .mindmap.json 文件" aria-label="打开本地文件">
             打开本地文件
@@ -172,6 +175,31 @@
         </div>
       </section>
 
+      <section class="compare-overlay" id="compare-overlay" hidden aria-label="思维导图对比">
+        <div class="compare-panel" role="dialog" aria-modal="true" aria-labelledby="compare-title">
+          <header class="compare-header">
+            <div>
+              <span class="compare-kicker">Compare</span>
+              <h1 id="compare-title">对比思维导图</h1>
+              <p>选择 Working Folder 中的两个 map，查看新增、删除和修改的主题。</p>
+            </div>
+            <button class="icon-button" id="close-compare" type="button" title="关闭对比" aria-label="关闭对比">×</button>
+          </header>
+          <div class="compare-controls">
+            <label>
+              <span>左侧 map</span>
+              <select id="compare-left"></select>
+            </label>
+            <label>
+              <span>右侧 map</span>
+              <select id="compare-right"></select>
+            </label>
+            <button class="primary-button" id="run-compare" type="button">开始对比</button>
+          </div>
+          <div class="compare-result" id="compare-result"></div>
+        </div>
+      </section>
+
       <section class="document-overlay" id="node-document-overlay" hidden aria-label="主题文档页面">
         <div class="document-panel">
           <header class="document-panel-header">
@@ -214,6 +242,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=51"></script>
+    <script src="./app.js?v=52"></script>
   </body>
 </html>

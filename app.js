@@ -187,6 +187,13 @@ const homeList = document.querySelector("#home-list");
 const closeHomeButton = document.querySelector("#close-home");
 const newLocalMapButton = document.querySelector("#new-local-map");
 const trashButton = document.querySelector("#trash-button");
+const compareButton = document.querySelector("#compare-button");
+const compareOverlay = document.querySelector("#compare-overlay");
+const closeCompareButton = document.querySelector("#close-compare");
+const compareLeftSelect = document.querySelector("#compare-left");
+const compareRightSelect = document.querySelector("#compare-right");
+const runCompareButton = document.querySelector("#run-compare");
+const compareResult = document.querySelector("#compare-result");
 const openFileInput = document.querySelector("#open-file-input");
 const selectionMarquee = document.querySelector("#selection-marquee");
 const nodeDocumentOverlay = document.querySelector("#node-document-overlay");
@@ -3126,6 +3133,306 @@ function closeHome() {
   viewport.focus({ preventScroll: true });
 }
 
+function compareOptionLabel(entry) {
+  const folder = workspacePathDirectory(entry.path);
+  return `${workspaceEntryDisplayName(entry)}${folder ? ` · ${folder}` : ""}`;
+}
+
+function populateCompareSelectors() {
+  [compareLeftSelect, compareRightSelect].forEach((select) => select.replaceChildren());
+  workspaceFiles.forEach((entry) => {
+    [compareLeftSelect, compareRightSelect].forEach((select) => {
+      const option = document.createElement("option");
+      option.value = entry.path;
+      option.textContent = compareOptionLabel(entry);
+      select.append(option);
+    });
+  });
+  const currentIndex = Math.max(0, workspaceFiles.findIndex((entry) => entry.path === currentWorkspaceFileName));
+  compareLeftSelect.selectedIndex = currentIndex;
+  compareRightSelect.selectedIndex = workspaceFiles.length > 1
+    ? currentIndex === 0 ? 1 : 0
+    : currentIndex;
+  runCompareButton.disabled = workspaceFiles.length < 2;
+}
+
+function renderCompareMessage(message, tone = "empty") {
+  compareResult.replaceChildren();
+  const empty = document.createElement("div");
+  empty.className = `compare-empty ${tone}`;
+  empty.textContent = message;
+  compareResult.append(empty);
+}
+
+async function openCompareOverlay() {
+  if (!workspaceDirectoryHandle) {
+    await chooseWorkspaceDirectory();
+    if (!workspaceDirectoryHandle) {
+      showStatus("需要先选择工作目录", 2200);
+      return;
+    }
+  }
+  if (autosaveDirty) {
+    const saved = await autosaveLocal({ silent: false });
+    if (!saved) return;
+  }
+  await refreshWorkspaceFiles();
+  populateCompareSelectors();
+  compareOverlay.hidden = false;
+  if (workspaceFiles.length < 2) {
+    renderCompareMessage("工作目录中至少需要两个可打开的 mindmap 文件");
+  } else {
+    renderCompareMessage("选择两个 map 后开始对比");
+    runMapCompare();
+  }
+}
+
+function closeCompareOverlay() {
+  compareOverlay.hidden = true;
+  viewport.focus({ preventScroll: true });
+}
+
+async function readWorkspaceProject(entry) {
+  const file = await entry.handle.getFile();
+  const raw = JSON.parse(await file.text());
+  return {
+    entry,
+    raw,
+    data: normalizeProject(raw),
+  };
+}
+
+function shortText(value, fallback = "空") {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text ? text.slice(0, 120) : fallback;
+}
+
+function compareValue(value) {
+  return stableStringify(value ?? "");
+}
+
+function mapLinkCompareValue(node) {
+  return node.mapLink ? {
+    fileName: node.mapLink.fileName || "",
+    name: node.mapLink.name || "",
+  } : "";
+}
+
+function nodeImageCompareValue(node) {
+  return Array.isArray(node.images)
+    ? node.images.map((image) => ({
+      name: image.name || "",
+      src: image.src || "",
+      width: image.width || "",
+      height: image.height || "",
+    }))
+    : [];
+}
+
+function flattenComparableProject(data) {
+  const nodeMap = new Map(data.nodes.map((node) => [node.id, node]));
+  const children = new Map();
+  data.nodes.forEach((node) => {
+    if (node.parentId === null) return;
+    if (!children.has(node.parentId)) children.set(node.parentId, []);
+    children.get(node.parentId).push(node);
+  });
+  const root = data.nodes.find((node) => node.parentId === null) || data.nodes[0];
+  const result = new Map();
+  const ordered = [];
+  const visit = (node, key, pathParts) => {
+    const path = [...pathParts, shortText(node.text, node.id === "root" ? "主题" : "未命名主题")];
+    const item = {
+      key,
+      node,
+      path: path.join(" / "),
+      signature: {
+        text: node.text || "",
+        side: node.side,
+        color: node.color || "",
+        collapsed: Boolean(node.collapsed),
+        width: Number.isFinite(Number(node.width)) ? Number(node.width) : "",
+        document: node.document || "",
+        images: nodeImageCompareValue(node),
+        mapLink: mapLinkCompareValue(node),
+        parentId: node.parentId === null ? null : nodeMap.get(node.parentId)?.text || node.parentId,
+      },
+    };
+    result.set(key, item);
+    ordered.push(key);
+    (children.get(node.id) || []).forEach((child, index) => {
+      visit(child, `${key}.${index + 1}`, path);
+    });
+  };
+  visit(root, "root", []);
+  return { map: result, ordered };
+}
+
+function compareProjects(left, right) {
+  const leftFlat = flattenComparableProject(left.data);
+  const rightFlat = flattenComparableProject(right.data);
+  const diffs = [];
+  if (left.data.title !== right.data.title) {
+    diffs.push({
+      type: "changed",
+      key: "title",
+      path: "文件名 / 标题",
+      fields: ["标题"],
+      leftText: left.data.title,
+      rightText: right.data.title,
+    });
+  }
+  const keys = [...new Set([...leftFlat.ordered, ...rightFlat.ordered])].filter((key) => key !== "root" || leftFlat.map.has(key) || rightFlat.map.has(key));
+  keys.forEach((key) => {
+    const leftItem = leftFlat.map.get(key);
+    const rightItem = rightFlat.map.get(key);
+    if (!leftItem && rightItem) {
+      diffs.push({
+        type: "added",
+        key,
+        path: rightItem.path,
+        fields: ["新增主题"],
+        rightText: rightItem.node.text,
+      });
+      return;
+    }
+    if (leftItem && !rightItem) {
+      diffs.push({
+        type: "removed",
+        key,
+        path: leftItem.path,
+        fields: ["删除主题"],
+        leftText: leftItem.node.text,
+      });
+      return;
+    }
+    const fields = [];
+    const fieldLabels = {
+      text: "主题文字",
+      side: "方向",
+      color: "颜色",
+      collapsed: "折叠",
+      width: "宽度",
+      document: "文档",
+      images: "图片",
+      mapLink: "链接",
+      parentId: "父主题",
+    };
+    Object.keys(fieldLabels).forEach((field) => {
+      if (compareValue(leftItem.signature[field]) !== compareValue(rightItem.signature[field])) {
+        fields.push(fieldLabels[field]);
+      }
+    });
+    if (fields.length) {
+      diffs.push({
+        type: "changed",
+        key,
+        path: rightItem.path || leftItem.path,
+        fields,
+        leftText: leftItem.node.text,
+        rightText: rightItem.node.text,
+      });
+    }
+  });
+  return diffs;
+}
+
+function renderCompareDiffCard(diff) {
+  const card = document.createElement("article");
+  card.className = `compare-diff-card ${diff.type}`;
+
+  const header = document.createElement("header");
+  const type = document.createElement("span");
+  type.className = "compare-type";
+  type.textContent = diff.type === "added" ? "新增" : diff.type === "removed" ? "删除" : "修改";
+  const path = document.createElement("strong");
+  path.textContent = diff.path;
+  header.append(type, path);
+
+  const body = document.createElement("div");
+  body.className = "compare-diff-body";
+  const left = document.createElement("div");
+  left.className = "compare-side old";
+  left.innerHTML = "<span>左</span>";
+  const leftText = document.createElement("p");
+  leftText.textContent = diff.leftText === undefined ? "无" : shortText(diff.leftText);
+  left.append(leftText);
+
+  const arrow = document.createElement("div");
+  arrow.className = "compare-arrow";
+  arrow.textContent = "→";
+
+  const right = document.createElement("div");
+  right.className = "compare-side new";
+  right.innerHTML = "<span>右</span>";
+  const rightText = document.createElement("p");
+  rightText.textContent = diff.rightText === undefined ? "无" : shortText(diff.rightText);
+  right.append(rightText);
+  body.append(left, arrow, right);
+
+  const fields = document.createElement("div");
+  fields.className = "compare-fields";
+  diff.fields.forEach((field) => {
+    const chip = document.createElement("span");
+    chip.textContent = field;
+    fields.append(chip);
+  });
+  card.append(header, body, fields);
+  return card;
+}
+
+function renderCompareResult(diffs) {
+  compareResult.replaceChildren();
+  if (!diffs.length) {
+    renderCompareMessage("无区别", "success");
+    return;
+  }
+  const summary = document.createElement("div");
+  summary.className = "compare-summary";
+  const counts = {
+    added: diffs.filter((diff) => diff.type === "added").length,
+    removed: diffs.filter((diff) => diff.type === "removed").length,
+    changed: diffs.filter((diff) => diff.type === "changed").length,
+  };
+  [
+    ["added", "新增", counts.added],
+    ["removed", "删除", counts.removed],
+    ["changed", "修改", counts.changed],
+  ].forEach(([type, label, count]) => {
+    const item = document.createElement("span");
+    item.className = `compare-count ${type}`;
+    item.textContent = `${label} ${count}`;
+    summary.append(item);
+  });
+  const list = document.createElement("div");
+  list.className = "compare-diff-list";
+  diffs.forEach((diff) => list.append(renderCompareDiffCard(diff)));
+  compareResult.append(summary, list);
+}
+
+async function runMapCompare() {
+  const leftEntry = workspaceFileByName(compareLeftSelect.value);
+  const rightEntry = workspaceFileByName(compareRightSelect.value);
+  if (!leftEntry || !rightEntry) {
+    renderCompareMessage("找不到选中的 map 文件");
+    return;
+  }
+  runCompareButton.disabled = true;
+  renderCompareMessage("正在对比...");
+  try {
+    const [left, right] = await Promise.all([
+      readWorkspaceProject(leftEntry),
+      readWorkspaceProject(rightEntry),
+    ]);
+    renderCompareResult(compareProjects(left, right));
+  } catch (error) {
+    console.error(error);
+    renderCompareMessage("无法读取其中一个 map 文件");
+  } finally {
+    runCompareButton.disabled = workspaceFiles.length < 2;
+  }
+}
+
 function openLocalMap(id, { keepHomeOpen = false } = {}) {
   openWorkspaceMapFile(id).then((opened) => {
     if (opened && !keepHomeOpen) closeHome();
@@ -3962,7 +4269,13 @@ workspaceResizer.addEventListener("pointercancel", (event) => {
   if (workspaceResizer.hasPointerCapture(event.pointerId)) workspaceResizer.releasePointerCapture(event.pointerId);
 });
 homeButton.addEventListener("click", openHome);
+compareButton.addEventListener("click", openCompareOverlay);
 closeHomeButton.addEventListener("click", closeHome);
+closeCompareButton.addEventListener("click", closeCompareOverlay);
+runCompareButton.addEventListener("click", runMapCompare);
+compareOverlay.addEventListener("click", (event) => {
+  if (event.target === compareOverlay) closeCompareOverlay();
+});
 newLocalMapButton.addEventListener("click", () => newLocalMap());
 trashButton.addEventListener("click", () => {
   homeMode = homeMode === "trash" ? "maps" : "trash";
@@ -4817,6 +5130,10 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && !nodeDocumentOverlay.hidden) {
     closeNodeDocument();
+    return;
+  }
+  if (event.key === "Escape" && compareOverlay && !compareOverlay.hidden) {
+    closeCompareOverlay();
     return;
   }
   if (event.key === "Escape" && !homeOverlay.hidden) closeHome();
