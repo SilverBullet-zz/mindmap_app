@@ -10,7 +10,6 @@ const WORKSPACE_NAME_KEY = "zhitu.workspaceName.v1";
 const WORKSPACE_WIDTH_KEY = "zhitu.workspaceWidth.v1";
 const WORKSPACE_COLLAPSED_KEY = "zhitu.workspaceCollapsed.v1";
 const WORKSPACE_CURRENT_FILE_KEY = "zhitu.workspaceCurrentFile.v1";
-const WORKSPACE_FILE_EXTENSIONS = [".mindmap.json", ".json"];
 const WORKSPACE_TRASH_DIR = ".mindmap_trash";
 const WORKSPACE_TRASH_FORMAT = "mindmap-trash";
 const AUTOSAVE_INTERVAL = 5000;
@@ -126,6 +125,7 @@ let workspaceTree = [];
 let expandedWorkspaceFolders = new Set();
 let currentWorkspaceFileName = null;
 let currentWorkspaceFileModifiedAt = 0;
+let currentWorkspaceFileFingerprint = "";
 let workspaceConflictPaused = false;
 let workspaceConflictFileName = null;
 let autosaveWorkspacePromise = null;
@@ -368,6 +368,7 @@ function currentMapSnapshot({ focusNodeId = selectedId } = {}) {
     localId: currentLocalId,
     workspaceFileName: currentWorkspaceFileName,
     workspaceModifiedAt: currentWorkspaceFileModifiedAt,
+    workspaceFingerprint: currentWorkspaceFileFingerprint,
     selectedId: getNode(focusNodeId) ? focusNodeId : selectedId,
     selectedIds: getNode(focusNodeId) ? [focusNodeId] : [...selectedIds],
     zoom,
@@ -379,6 +380,7 @@ function restoreMapSnapshot(snapshot) {
   if (!snapshot?.data) return;
   currentWorkspaceFileName = snapshot.workspaceFileName || null;
   currentWorkspaceFileModifiedAt = snapshot.workspaceModifiedAt || 0;
+  currentWorkspaceFileFingerprint = snapshot.workspaceFingerprint || "";
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
   if (localStorageAvailable()) {
@@ -1639,6 +1641,45 @@ function projectData() {
   };
 }
 
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function hashText(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function projectFingerprint(raw) {
+  const data = normalizeProject(raw);
+  return hashText(stableStringify({
+    format: "mindmap",
+    version: 1,
+    localId: typeof raw?.localId === "string" ? raw.localId : "",
+    title: data.title,
+    view: data.view,
+    nodes: data.nodes,
+  }));
+}
+
+function clearWorkspaceFileIdentity() {
+  currentWorkspaceFileName = null;
+  currentWorkspaceFileModifiedAt = 0;
+  currentWorkspaceFileFingerprint = "";
+}
+
 function localStorageAvailable() {
   try {
     const key = "__zhitu_storage_test__";
@@ -1737,8 +1778,7 @@ async function initializeWorkspaceDirectory() {
   }
   updateWorkspaceUi();
   await refreshWorkspaceFiles();
-  currentWorkspaceFileName = null;
-  currentWorkspaceFileModifiedAt = 0;
+  clearWorkspaceFileIdentity();
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
   if (localStorageAvailable()) localStorage.removeItem(WORKSPACE_CURRENT_FILE_KEY);
@@ -1768,9 +1808,12 @@ async function chooseWorkspaceDirectory() {
   }
 }
 
-function isMindmapFileName(name) {
-  const lower = String(name || "").toLocaleLowerCase();
-  return WORKSPACE_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension));
+function isDedicatedMindmapFileName(name) {
+  return String(name || "").toLocaleLowerCase().endsWith(".mindmap.json");
+}
+
+function isJsonFileName(name) {
+  return String(name || "").toLocaleLowerCase().endsWith(".json");
 }
 
 function joinWorkspacePath(parentPath, name) {
@@ -1910,19 +1953,25 @@ async function refreshWorkspaceFiles() {
           entries.push(directoryEntry);
           continue;
         }
-        if (!isMindmapFileName(name)) {
+        if (!isJsonFileName(name)) {
           entries.push({ kind: "unsupported", name, path, handle });
           continue;
         }
-        const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题" };
+        const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题", fingerprint: "" };
         try {
           const file = await handle.getFile();
-          const data = normalizeProject(JSON.parse(await file.text()));
+          const raw = JSON.parse(await file.text());
+          const data = normalizeProject(raw);
           item.title = data.title || data.nodes.find((node) => node.id === "root")?.text || name;
           item.updatedAt = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
           item.nodeCount = data.nodes.length;
           item.preview = data.nodes.find((node) => node.id === "root")?.text || "主题";
+          item.fingerprint = projectFingerprint(raw);
         } catch {
+          if (!isDedicatedMindmapFileName(name)) {
+            entries.push({ kind: "unsupported", name, path, handle });
+            continue;
+          }
           item.title = name;
         }
         workspaceFiles.push(item);
@@ -2213,10 +2262,30 @@ async function workspaceFileChangedExternally(handle, name) {
   if (!currentWorkspaceFileModifiedAt || name !== currentWorkspaceFileName) return false;
   const file = await handle.getFile();
   if (file.lastModified <= currentWorkspaceFileModifiedAt + 1200) return false;
+  let externalFingerprint = "";
+  try {
+    externalFingerprint = projectFingerprint(JSON.parse(await file.text()));
+  } catch {
+    return {
+      fileName: name,
+      externalModifiedAt: file.lastModified,
+      localKnownModifiedAt: currentWorkspaceFileModifiedAt,
+      externalFingerprint: "",
+      localKnownFingerprint: currentWorkspaceFileFingerprint,
+      unreadable: true,
+    };
+  }
+  if (currentWorkspaceFileFingerprint && externalFingerprint === currentWorkspaceFileFingerprint) {
+    currentWorkspaceFileModifiedAt = file.lastModified || Date.now();
+    showStatus("文件时间变化但内容一致，已自动同步", 1800);
+    return false;
+  }
   return {
     fileName: name,
     externalModifiedAt: file.lastModified,
     localKnownModifiedAt: currentWorkspaceFileModifiedAt,
+    externalFingerprint,
+    localKnownFingerprint: currentWorkspaceFileFingerprint,
   };
 }
 
@@ -2225,6 +2294,9 @@ function workspaceConflictError(conflict) {
   error.fileName = conflict.fileName;
   error.externalModifiedAt = conflict.externalModifiedAt;
   error.localKnownModifiedAt = conflict.localKnownModifiedAt;
+  error.externalFingerprint = conflict.externalFingerprint;
+  error.localKnownFingerprint = conflict.localKnownFingerprint;
+  error.unreadable = conflict.unreadable;
   return error;
 }
 
@@ -2330,6 +2402,7 @@ async function writeWorkspaceProjectFile(name, data, { allowOverwrite = false } 
   await writable.close();
   currentWorkspaceFileName = name;
   currentWorkspaceFileModifiedAt = (await handle.getFile()).lastModified || Date.now();
+  currentWorkspaceFileFingerprint = projectFingerprint(data);
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
   if (localStorageAvailable()) localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, name);
@@ -2361,8 +2434,11 @@ function showWorkspaceConflictDialog(error) {
       `“${workspaceConflictFileName || "当前文件"}”即将发生高风险保存：${reasons || "内容变化较大"}。` +
       "自动保存已暂停。你可以先按 Ctrl+Z 撤销，或另存为副本；如果选择覆盖，旧版本会先备份到垃圾桶。";
   } else {
+    const reason = error?.unreadable
+      ? "磁盘上的文件暂时无法读取为 Mindmap 工程。"
+      : "磁盘上的文件内容确实和当前打开时不同。";
     workspaceConflictMessage.textContent =
-      `“${workspaceConflictFileName || "当前文件"}”在你打开后被另一个窗口或页面修改过。` +
+      `“${workspaceConflictFileName || "当前文件"}”在你打开后发生变化。${reason}` +
       `外部修改时间：${formatConflictTime(error?.externalModifiedAt)}。` +
       "自动保存已暂停，避免覆盖那个版本。";
   }
@@ -2697,7 +2773,7 @@ async function openProjectFromPicker() {
     const [handle] = await window.showOpenFilePicker(options);
     if (!handle) return;
     const file = await handle.getFile();
-    await openProject(file, { workspaceFileName: file.name });
+    await openProject(file, { status: "工程已导入，保存时会写入工作目录" });
   } catch (error) {
     if (error?.name !== "AbortError") {
       console.error(error);
@@ -2913,7 +2989,7 @@ async function openProject(
   file,
   {
     status = "工程已打开",
-    localId = createLocalId(),
+    localId = null,
     markDirty = true,
     keepReturnStack = false,
     workspaceFileName = null,
@@ -2922,16 +2998,20 @@ async function openProject(
 ) {
   try {
     if (!keepReturnStack) mapReturnStack = [];
-    const data = normalizeProject(JSON.parse(await file.text()));
+    const raw = JSON.parse(await file.text());
+    const data = normalizeProject(raw);
+    const fingerprint = projectFingerprint(raw);
+    const projectLocalId = typeof raw.localId === "string" && raw.localId ? raw.localId : localId || createLocalId();
     currentWorkspaceFileName = workspaceFileName || null;
-    currentWorkspaceFileModifiedAt = workspaceFileName ? workspaceModifiedAt : 0;
+    currentWorkspaceFileModifiedAt = workspaceFileName ? workspaceModifiedAt || file.lastModified || 0 : 0;
+    currentWorkspaceFileFingerprint = workspaceFileName ? fingerprint : "";
     workspaceConflictPaused = false;
     workspaceConflictFileName = null;
     hideWorkspaceConflictDialog();
     if (currentWorkspaceFileName && localStorageAvailable()) {
       localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, currentWorkspaceFileName);
     }
-    applyProjectData(data, { localId, status, markDirty });
+    applyProjectData(data, { localId: projectLocalId, status, markDirty });
     if (markDirty) await autosaveLocal();
     updateMapReturnButton();
     return true;
@@ -3078,8 +3158,7 @@ async function writeWorkspaceTrashEntry(entry) {
 }
 
 function resetToUnsavedDefaultMap(status = "已移到垃圾桶") {
-  currentWorkspaceFileName = null;
-  currentWorkspaceFileModifiedAt = 0;
+  clearWorkspaceFileIdentity();
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
   applyProjectData({
@@ -3283,8 +3362,7 @@ function purgeLocalMap(id) {
 function newLocalMap({ keepHomeOpen = false } = {}) {
   homeMode = "maps";
   mapReturnStack = [];
-  currentWorkspaceFileName = null;
-  currentWorkspaceFileModifiedAt = 0;
+  clearWorkspaceFileIdentity();
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
   hideWorkspaceConflictDialog();
