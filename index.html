@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f7f8fa" />
+    <meta name="theme-color" content="#eefbf3" />
     <title>枝图 - 思维导图</title>
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=33" />
   </head>
   <body>
     <div class="app-shell">
@@ -17,15 +17,28 @@
           <span>枝图</span>
         </div>
         <div class="document-title">
-          <input id="document-title" value="未命名思维导图" aria-label="文档名称" />
+          <input id="document-title" value="主题" aria-label="文档名称" />
           <span class="save-state">已保存</span>
         </div>
+        <div class="search-box" id="search-box">
+          <div class="search-input-wrap">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="search-input" type="search" placeholder="搜索主题" autocomplete="off" aria-label="搜索思维导图主题" />
+          </div>
+          <button class="search-toggle" id="search-case-toggle" type="button" aria-pressed="false" title="区分大小写">Aa</button>
+          <button class="search-toggle" id="search-scope-toggle" type="button" aria-pressed="false" title="搜索范围">本页</button>
+          <div class="search-results" id="search-results" hidden></div>
+        </div>
         <div class="top-actions">
-          <button class="icon-button file-button" id="open-button" type="button" title="打开工程 (Ctrl+O)" aria-label="打开工程">
-            <span class="folder-icon" aria-hidden="true"></span>
+          <button class="secondary-button" id="home-button" type="button" title="工作目录首页" aria-label="工作目录首页">
+            首页
           </button>
-          <button class="icon-button file-button" id="save-button" type="button" title="保存工程 (Ctrl+S)" aria-label="保存工程">
+          <button class="secondary-button open-local-button" id="open-local-button" type="button" title="打开本地 .mindmap.json 文件" aria-label="打开本地文件">
+            打开本地文件
+          </button>
+          <button class="command-button file-button" id="save-button" type="button" title="保存工程 (Ctrl+S)" aria-label="保存工程">
             <span class="save-icon" aria-hidden="true"></span>
+            <span>保存</span>
           </button>
           <input id="open-file-input" type="file" accept=".json,.mindmap.json,application/json" hidden />
           <span class="toolbar-divider"></span>
@@ -43,6 +56,10 @@
               <span class="menu-chevron" aria-hidden="true"></span>
             </button>
             <div class="export-menu" id="export-menu" role="menu" hidden>
+              <button type="button" role="menuitem" data-export-format="mindmap">
+                <span class="format-badge mindmap">MAP</span>
+                <span><strong>Mindmap 工程</strong><small>可继续编辑的 .mindmap.json</small></span>
+              </button>
               <button type="button" role="menuitem" data-export-format="png">
                 <span class="format-badge png">PNG</span>
                 <span><strong>PNG 图片</strong><small>高清透明兼容图片</small></span>
@@ -61,7 +78,7 @@
           <button class="tool-button active" type="button" title="选择" aria-label="选择">
             <span class="cursor-icon" aria-hidden="true"></span>
           </button>
-          <button class="tool-button" id="add-button" type="button" title="添加分支 (Enter)" aria-label="添加分支">
+          <button class="tool-button" id="add-button" type="button" title="添加子主题 (Tab)" aria-label="添加子主题">
             <span class="plus-icon" aria-hidden="true"></span>
           </button>
           <button class="tool-button" id="edit-button" type="button" title="编辑主题 (F2)" aria-label="编辑主题">
@@ -78,6 +95,35 @@
           <button class="tool-button danger" id="delete-button" type="button" title="删除主题 (Delete)" aria-label="删除主题">
             <span class="trash-icon" aria-hidden="true"></span>
           </button>
+        </aside>
+
+        <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="工作目录">
+          <button class="workspace-collapse" id="workspace-collapse" type="button" title="收起工作目录" aria-label="收起工作目录"></button>
+          <div class="workspace-sidebar-content">
+            <div class="workspace-sidebar-header">
+              <span class="workspace-kicker">Working Folder</span>
+              <strong>工作目录</strong>
+            </div>
+            <div class="workspace-folder-card">
+              <span class="folder-icon workspace-folder-icon" aria-hidden="true"></span>
+              <div>
+                <span id="workspace-folder-name">未选择文件夹</span>
+                <small id="workspace-folder-status">保存和打开会先使用这里</small>
+              </div>
+            </div>
+            <div class="workspace-sidebar-actions">
+              <button class="secondary-button" id="choose-workspace-folder" type="button">选择文件夹</button>
+              <button class="secondary-button" id="open-workspace-file" type="button">打开文件</button>
+            </div>
+            <div class="workspace-file-section">
+              <div class="workspace-file-header">
+                <span>文件</span>
+                <button class="text-button" id="refresh-workspace-files" type="button">刷新</button>
+              </div>
+              <div class="workspace-file-list" id="workspace-file-list"></div>
+            </div>
+          </div>
+          <div class="workspace-resizer" id="workspace-resizer" role="separator" aria-orientation="vertical" aria-label="调整工作目录栏宽度"></div>
         </aside>
 
         <main class="canvas-viewport" id="canvas-viewport" tabindex="0" aria-label="思维导图画布">
@@ -102,10 +148,52 @@
               <span class="fit-icon" aria-hidden="true"></span>
             </button>
           </div>
+
+          <button class="map-return-button" id="map-return-button" type="button" hidden>
+            返回链接前位置
+          </button>
         </main>
       </div>
+
+      <section class="home-overlay" id="home-overlay" hidden aria-label="工作目录首页">
+        <div class="home-panel">
+          <div class="home-header">
+            <div>
+              <h1>工作目录</h1>
+              <p>这里显示当前 Working Folder 中的思维导图文件，自动保存也写入同一个文件夹。</p>
+            </div>
+            <div class="home-actions">
+              <button class="secondary-button" id="new-local-map" type="button">新建</button>
+              <button class="secondary-button" id="trash-button" type="button" aria-pressed="false">垃圾桶</button>
+              <button class="icon-button" id="close-home" type="button" title="关闭首页" aria-label="关闭首页">×</button>
+            </div>
+          </div>
+          <div class="home-list" id="home-list"></div>
+        </div>
+      </section>
+
+      <section class="document-overlay" id="node-document-overlay" hidden aria-label="主题文档页面">
+        <div class="document-panel">
+          <header class="document-panel-header">
+            <div>
+              <span class="document-kicker">Markdown</span>
+              <h1 id="node-document-title">主题文档</h1>
+            </div>
+            <div class="document-actions">
+              <button class="secondary-button" id="copy-document-button" type="button">复制</button>
+              <button class="secondary-button" id="insert-image-button" type="button">插入图片</button>
+              <button class="icon-button" id="close-document-button" type="button" title="关闭文档" aria-label="关闭文档">×</button>
+            </div>
+          </header>
+          <div class="document-workspace">
+            <textarea id="node-document-editor" spellcheck="false" aria-label="Markdown 编辑器"></textarea>
+            <article class="markdown-preview" id="node-document-preview" aria-label="Markdown 预览"></article>
+          </div>
+          <input id="document-image-input" type="file" accept="image/*" hidden />
+        </div>
+      </section>
     </div>
 
-    <script src="./app.js?v=5"></script>
+    <script src="./app.js?v=42"></script>
   </body>
 </html>
