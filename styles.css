@@ -1310,6 +1310,58 @@ textarea:focus-visible {
   box-shadow: var(--shadow-xs);
 }
 
+.node-image-badge {
+  position: absolute;
+  left: 7px;
+  top: 7px;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(64, 133, 119, 0.24);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-xs);
+  cursor: zoom-in;
+}
+
+.node-image-badge:hover {
+  border-color: #69cabb;
+  background: #ffffff;
+  transform: translateY(-1px);
+}
+
+.node-image-badge span {
+  position: relative;
+  width: 12px;
+  height: 10px;
+  border: 1.7px solid #3f897d;
+  border-radius: 2px;
+}
+
+.node-image-badge span::before {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 2.5px;
+  height: 2.5px;
+  border-radius: 50%;
+  background: #3f897d;
+  content: "";
+}
+
+.node-image-badge span::after {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 1px;
+  height: 4px;
+  background: linear-gradient(135deg, transparent 45%, #3f897d 46% 56%, transparent 57%),
+    linear-gradient(45deg, transparent 35%, #3f897d 36% 52%, transparent 53%);
+  content: "";
+}
+
 .topic-node.selected::after {
   position: absolute;
   right: -5px;

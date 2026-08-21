@@ -122,6 +122,8 @@ let workspaceHomeItems = [];
 let workspaceTree = [];
 let expandedWorkspaceFolders = new Set();
 let currentWorkspaceFileName = null;
+let currentWorkspaceFileModifiedAt = 0;
+let workspaceConflictPaused = false;
 let autosaveWorkspacePromise = null;
 let autosaveWorkspaceQueued = false;
 let mapReturnStack = [];
@@ -193,7 +195,11 @@ const closeImageViewerButton = document.querySelector("#close-image-viewer");
 let activeDocumentId = null;
 
 function cloneNodes(source = nodes) {
-  return source.map((node) => ({ ...node }));
+  return source.map((node) => ({
+    ...node,
+    mapLink: node.mapLink ? { ...node.mapLink } : undefined,
+    images: Array.isArray(node.images) ? node.images.map((image) => ({ ...image })) : undefined,
+  }));
 }
 
 function pushHistory() {
@@ -715,7 +721,8 @@ function render() {
     const childCount = childrenOf(node.id).length;
     const searchHit = searchState.query.trim() && hasSearchMatch(node.text);
     const linked = isLinkedNode(node);
-    element.className = `topic-node${node.id === "root" ? " root" : ""}${isSelected ? " selected" : ""}${node.id === selectedId && isSelected ? " primary" : ""}${node.id === editingId ? " editing" : ""}${animatingNodeIds.has(node.id) ? " creating" : ""}${node.collapsed ? " collapsed" : ""}${searchHit ? " search-hit" : ""}${linked ? " linked" : ""}`;
+    const attachedImages = nodeImages(node);
+    element.className = `topic-node${node.id === "root" ? " root" : ""}${isSelected ? " selected" : ""}${node.id === selectedId && isSelected ? " primary" : ""}${node.id === editingId ? " editing" : ""}${animatingNodeIds.has(node.id) ? " creating" : ""}${node.collapsed ? " collapsed" : ""}${searchHit ? " search-hit" : ""}${linked ? " linked" : ""}${attachedImages.length ? " has-image" : ""}`;
     element.dataset.id = node.id;
     element.style.left = `${node.x}px`;
     element.style.top = `${node.y}px`;
@@ -736,6 +743,18 @@ function render() {
       appendHighlightedText(label, node.text);
     }
     element.append(label);
+
+    if (attachedImages.length && node.id !== editingId) {
+      const imageBadge = document.createElement("button");
+      imageBadge.type = "button";
+      imageBadge.className = "node-image-badge";
+      imageBadge.dataset.action = "view-node-image";
+      imageBadge.dataset.id = node.id;
+      imageBadge.title = attachedImages.length > 1 ? `查看图片（${attachedImages.length} 张）` : "查看图片";
+      imageBadge.setAttribute("aria-label", imageBadge.title);
+      imageBadge.innerHTML = "<span></span>";
+      element.append(imageBadge);
+    }
 
     if (linked && node.id !== editingId) {
       const linkBadge = document.createElement("span");
@@ -968,6 +987,7 @@ function documentImageStyle(dimensions) {
 function isInlineDocumentImageSource(src) {
   const value = String(src || "").trim();
   if (/^data:image\//i.test(value)) return true;
+  if (/^blob:/i.test(value)) return true;
   if (/^https?:\/\//i.test(value)) return isSafeUrl(value);
   return false;
 }
@@ -1173,6 +1193,39 @@ function pastedImageFile(event) {
   return imageItem?.getAsFile?.() || null;
 }
 
+function normalizeNodeImages(images) {
+  if (!Array.isArray(images)) return [];
+  return images
+    .map((image) => ({
+      src: String(image?.src || "").slice(0, 320),
+      name: String(image?.name || "image").slice(0, 120),
+      createdAt: String(image?.createdAt || "").slice(0, 40),
+    }))
+    .filter((image) => image.src)
+    .slice(0, 24);
+}
+
+function nodeImages(node) {
+  return normalizeNodeImages(node?.images);
+}
+
+function latestNodeImage(node) {
+  const images = nodeImages(node);
+  return images.at(-1) || null;
+}
+
+async function openImageViewer(src, alt = "") {
+  const url = await resolveDocumentImageUrl(src);
+  if (!url) {
+    showStatus("图片文件无法读取", 2200);
+    return;
+  }
+  documentImageViewerImg.src = url;
+  documentImageViewerImg.alt = alt || "";
+  documentImageViewer.hidden = false;
+  closeImageViewerButton.focus({ preventScroll: true });
+}
+
 function documentImageLine(lineIndex) {
   const lines = nodeDocumentEditor.value.replace(/\r\n/g, "\n").split("\n");
   const line = lines[lineIndex];
@@ -1232,15 +1285,7 @@ function commitDocumentImageResize(state) {
 
 async function openDocumentImageViewerFromImage(image) {
   const src = image?.dataset.imagePath || image?.getAttribute("src") || "";
-  const url = image?.currentSrc || await resolveDocumentImageUrl(src);
-  if (!url) {
-    showStatus("图片文件无法读取", 2200);
-    return;
-  }
-  documentImageViewerImg.src = url;
-  documentImageViewerImg.alt = image.alt || "";
-  documentImageViewer.hidden = false;
-  closeImageViewerButton.focus({ preventScroll: true });
+  return openImageViewer(image?.currentSrc || src, image?.alt || "");
 }
 
 function closeDocumentImageViewer() {
@@ -1512,18 +1557,19 @@ function projectData() {
       zoom,
       pan: { ...pan },
     },
-    nodes: nodes.map(({ id, parentId, text, side, color, collapsed, width, document, mapLink }) => ({
-      id,
-      parentId,
-      text,
-      side,
-      color,
-      collapsed: Boolean(collapsed),
-      width: Number.isFinite(Number(width)) ? Number(width) : undefined,
-      document: typeof document === "string" ? document : undefined,
-      mapLink: mapLink?.fileName || mapLink?.name ? {
-        fileName: String(mapLink.fileName || mapLink.name || "").slice(0, 260),
-        name: String(mapLink.name || mapLink.fileName || "").slice(0, 260),
+    nodes: nodes.map((node) => ({
+      id: node.id,
+      parentId: node.parentId,
+      text: node.text,
+      side: node.side,
+      color: node.color,
+      collapsed: Boolean(node.collapsed),
+      width: Number.isFinite(Number(node.width)) ? Number(node.width) : undefined,
+      document: typeof node.document === "string" ? node.document : undefined,
+      images: nodeImages(node).length ? nodeImages(node) : undefined,
+      mapLink: node.mapLink?.fileName || node.mapLink?.name ? {
+        fileName: String(node.mapLink.fileName || node.mapLink.name || "").slice(0, 260),
+        name: String(node.mapLink.name || node.mapLink.fileName || "").slice(0, 260),
       } : undefined,
     })),
   };
@@ -1628,6 +1674,8 @@ async function initializeWorkspaceDirectory() {
   updateWorkspaceUi();
   await refreshWorkspaceFiles();
   currentWorkspaceFileName = null;
+  currentWorkspaceFileModifiedAt = 0;
+  workspaceConflictPaused = false;
   if (localStorageAvailable()) localStorage.removeItem(WORKSPACE_CURRENT_FILE_KEY);
 }
 
@@ -1868,6 +1916,32 @@ function imageExtensionForFile(file) {
   return "png";
 }
 
+function extensionForMimeType(type) {
+  const value = String(type || "").toLowerCase();
+  if (value.includes("jpeg")) return "jpg";
+  if (value.includes("png")) return "png";
+  if (value.includes("webp")) return "webp";
+  if (value.includes("gif")) return "gif";
+  if (value.includes("bmp")) return "bmp";
+  return "png";
+}
+
+async function readClipboardImageFile() {
+  if (!navigator.clipboard?.read) return null;
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const imageType = item.types?.find((type) => type.startsWith("image/"));
+      if (!imageType) continue;
+      const blob = await item.getType(imageType);
+      return new File([blob], `pasted-image-${Date.now()}.${extensionForMimeType(imageType)}`, { type: imageType });
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function safeImageFileBaseName(value) {
   return safeFileBaseName(String(value || "image").replace(/\.[^.]+$/, ""))
     .replace(/[()[\]{}]/g, " ")
@@ -1930,14 +2004,78 @@ async function insertDocumentImageFile(file) {
   }
 }
 
-async function writeWorkspaceProjectFile(name, data) {
+async function attachImageToNode(file, nodeId = selectedId) {
+  const node = getNode(nodeId);
+  if (!node) return false;
+  try {
+    const src = await saveDocumentImageFile(file);
+    pushHistory();
+    node.images = [
+      ...nodeImages(node),
+      {
+        src,
+        name: safeFileBaseName(file.name || "image"),
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    selectedId = node.id;
+    selectedIds = new Set([node.id]);
+    render();
+    markSaving();
+    showStatus(`图片已添加到“${node.text || "主题"}”`);
+    return true;
+  } catch (error) {
+    console.error(error);
+    if (error?.message === "NO_WORKSPACE") {
+      showStatus("请先选择工作目录后再粘贴图片", 2600);
+    } else if (error?.message === "NO_WORKSPACE_PERMISSION") {
+      showStatus("需要授权工作目录写入权限", 2600);
+    } else {
+      showStatus("无法粘贴图片", 2200);
+    }
+    return false;
+  }
+}
+
+async function openNodeImage(nodeId) {
+  const node = getNode(nodeId);
+  const image = latestNodeImage(node);
+  if (!image) return;
+  await openImageViewer(image.src, image.name || node?.text || "");
+}
+
+async function workspaceFileChangedExternally(handle, name) {
+  if (!currentWorkspaceFileModifiedAt || name !== currentWorkspaceFileName) return false;
+  const file = await handle.getFile();
+  return file.lastModified > currentWorkspaceFileModifiedAt + 1200;
+}
+
+function confirmWorkspaceConflictOverwrite(name) {
+  return window.confirm(
+    `检测到“${name}”已经被另一个窗口或页面修改。\n\n` +
+    "如果继续保存，会覆盖那个版本。\n\n" +
+    "点击“确定”覆盖文件；点击“取消”暂停保存。"
+  );
+}
+
+async function writeWorkspaceProjectFile(name, data, { confirmConflict = false } = {}) {
   if (!workspaceDirectoryHandle) return false;
   if (!await ensureWorkspacePermission("readwrite")) return false;
   const handle = await getWorkspaceFileHandleByPath(name, { create: true });
+  if (await workspaceFileChangedExternally(handle, name)) {
+    workspaceConflictPaused = true;
+    if (!confirmConflict || !confirmWorkspaceConflictOverwrite(name)) {
+      const error = new Error("WORKSPACE_FILE_CONFLICT");
+      error.fileName = name;
+      throw error;
+    }
+  }
   const writable = await handle.createWritable();
   await writable.write(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }));
   await writable.close();
   currentWorkspaceFileName = name;
+  currentWorkspaceFileModifiedAt = (await handle.getFile()).lastModified || Date.now();
+  workspaceConflictPaused = false;
   if (localStorageAvailable()) localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, name);
   return true;
 }
@@ -1953,7 +2091,7 @@ async function autosaveWorkspace({ silent = true } = {}) {
       const data = projectData();
       data.localId = currentLocalId;
       const name = currentWorkspaceFileName || await uniqueWorkspaceFileName(defaultFileBaseName());
-      const saved = await writeWorkspaceProjectFile(name, data);
+      const saved = await writeWorkspaceProjectFile(name, data, { confirmConflict: !silent });
       if (!saved) return autosaveLocalStorage({ silent });
       autosaveDirty = false;
       window.clearTimeout(markSaving.timer);
@@ -1961,6 +2099,13 @@ async function autosaveWorkspace({ silent = true } = {}) {
       await refreshWorkspaceFiles();
       return true;
     } catch (error) {
+      if (error?.message === "WORKSPACE_FILE_CONFLICT") {
+        autosaveDirty = true;
+        window.clearTimeout(markSaving.timer);
+        document.querySelector(".save-state").textContent = "检测到文件冲突，已暂停自动保存";
+        if (!silent) showStatus("文件已被其他窗口修改，未覆盖工作目录文件", 3200);
+        return false;
+      }
       console.error(error);
       if (!silent) showStatus("工作目录自动保存失败", 2200);
       return autosaveLocalStorage({ silent });
@@ -1987,10 +2132,12 @@ async function openWorkspaceMapFile(name, { fromLinkNodeId = null, restore = fal
   }
   try {
     if (fromLinkNodeId) mapReturnStack.push(currentMapSnapshot({ focusNodeId: fromLinkNodeId }));
-    const opened = await openProject(await entry.handle.getFile(), {
+    const file = await entry.handle.getFile();
+    const opened = await openProject(file, {
       status: restore ? "已恢复工作目录文件" : fromLinkNodeId ? `已打开链接：${name}` : "工作目录文件已打开",
       keepReturnStack: Boolean(fromLinkNodeId),
       workspaceFileName: name,
+      workspaceModifiedAt: file.lastModified || 0,
       markDirty: false,
     });
     if (!opened && fromLinkNodeId) mapReturnStack.pop();
@@ -2255,6 +2402,7 @@ function autosaveLocal(options = {}) {
 async function saveProject() {
   if (editingId) finishEditing();
   const saved = await autosaveLocal({ silent: false });
+  if (!saved && workspaceConflictPaused) return;
   showStatus(saved ? "工程已保存到工作目录" : "工程已保存到浏览器本地");
 }
 
@@ -2281,6 +2429,7 @@ function normalizeProject(data) {
       collapsed: Boolean(node.collapsed),
       width: Number.isFinite(Number(node.width)) ? clamp(Math.round(Number(node.width)), nodeWidthLimits({ id: node.id === "root" ? "root" : "branch" }).min, nodeWidthLimits({ id: node.id === "root" ? "root" : "branch" }).max) : undefined,
       document: typeof node.document === "string" ? node.document.slice(0, 200000) : undefined,
+      images: normalizeNodeImages(node.images),
       mapLink: node.mapLink && typeof node.mapLink === "object" ? {
         fileName: String(node.mapLink.fileName || node.mapLink.name || "").slice(0, 260),
         name: String(node.mapLink.name || node.mapLink.fileName || "").slice(0, 260),
@@ -2373,17 +2522,20 @@ async function openProject(
     markDirty = true,
     keepReturnStack = false,
     workspaceFileName = null,
+    workspaceModifiedAt = 0,
   } = {}
 ) {
   try {
     if (!keepReturnStack) mapReturnStack = [];
     const data = normalizeProject(JSON.parse(await file.text()));
     currentWorkspaceFileName = workspaceFileName || null;
+    currentWorkspaceFileModifiedAt = workspaceFileName ? workspaceModifiedAt : 0;
+    workspaceConflictPaused = false;
     if (currentWorkspaceFileName && localStorageAvailable()) {
       localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, currentWorkspaceFileName);
     }
     applyProjectData(data, { localId, status, markDirty });
-    await autosaveLocal();
+    if (markDirty) await autosaveLocal();
     updateMapReturnButton();
     return true;
   } catch (error) {
@@ -2615,6 +2767,8 @@ function newLocalMap({ keepHomeOpen = false } = {}) {
   homeMode = "maps";
   mapReturnStack = [];
   currentWorkspaceFileName = null;
+  currentWorkspaceFileModifiedAt = 0;
+  workspaceConflictPaused = false;
   applyProjectData({
     title: "主题",
     nodes: createDefaultNodes(),
@@ -2646,6 +2800,13 @@ function restoreLastLocalMap() {
 
 nodesLayer.addEventListener("click", async (event) => {
   if (suppressNextClick) return;
+  const imageBadge = event.target.closest(".node-image-badge");
+  if (imageBadge) {
+    event.preventDefault();
+    event.stopPropagation();
+    await openNodeImage(imageBadge.dataset.id);
+    return;
+  }
   const foldButton = event.target.closest(".fold-toggle");
   if (foldButton) {
     event.preventDefault();
@@ -2848,6 +3009,7 @@ function finishNodeResize(event, cancelled = false) {
 }
 
 nodesLayer.addEventListener("pointerdown", (event) => {
+  if (event.target.closest(".node-image-badge")) return;
   const resizeHandle = event.target.closest(".resize-handle");
   if (resizeHandle && !editingId && event.button === 0) {
     startNodeResize(event, resizeHandle);
@@ -3009,7 +3171,7 @@ viewport.addEventListener("keydown", (event) => {
   }
 });
 
-document.addEventListener("keydown", (event) => {
+document.addEventListener("keydown", async (event) => {
   const command = event.ctrlKey || event.metaKey;
   if (event.key === "Escape" && nodeDrag) {
     event.preventDefault();
@@ -3046,8 +3208,18 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     copySelectedSubtree();
   } else if (key === "v" && !editingText) {
-    event.preventDefault();
-    pasteSubtree();
+    if (navigator.clipboard?.read) {
+      event.preventDefault();
+      const imageFile = await readClipboardImageFile();
+      if (imageFile) {
+        await attachImageToNode(imageFile, selectedId);
+      } else if (internalClipboard) {
+        pasteSubtree();
+      }
+    } else if (internalClipboard) {
+      event.preventDefault();
+      pasteSubtree();
+    }
   } else if (key === "z" && event.shiftKey) {
     event.preventDefault();
     redo();
@@ -3245,6 +3417,15 @@ searchResults.addEventListener("click", (event) => {
 document.addEventListener("pointerdown", (event) => {
   if (event.target.closest("#search-box")) return;
   if (document.activeElement === searchInput) searchResults.hidden = true;
+});
+
+document.addEventListener("paste", (event) => {
+  if (!nodeDocumentOverlay.hidden) return;
+  if (editingId || event.target.matches("input, textarea, select, [contenteditable='true']")) return;
+  const imageFile = pastedImageFile(event);
+  if (!imageFile) return;
+  event.preventDefault();
+  attachImageToNode(imageFile, selectedId);
 });
 
 nodeDocumentEditor.addEventListener("input", () => syncActiveDocument());
