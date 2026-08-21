@@ -134,6 +134,9 @@ let documentImageResize = null;
 let selectedDocumentImageLine = null;
 let documentImagePreviewToken = 0;
 const documentImageObjectUrls = new Map();
+let nodeImagePreviewToken = 0;
+let pendingNodeImageTargetId = null;
+const nodeImagePastePendingIds = new Set();
 let searchState = {
   query: "",
   caseSensitive: false,
@@ -190,6 +193,7 @@ const closeDocumentButton = document.querySelector("#close-document-button");
 const copyDocumentButton = document.querySelector("#copy-document-button");
 const insertImageButton = document.querySelector("#insert-image-button");
 const documentImageInput = document.querySelector("#document-image-input");
+const nodeImageInput = document.querySelector("#node-image-input");
 const documentImageViewer = document.querySelector("#document-image-viewer");
 const documentImageViewerImg = document.querySelector("#document-image-viewer-img");
 const closeImageViewerButton = document.querySelector("#close-image-viewer");
@@ -751,15 +755,23 @@ function render() {
     }
     element.append(label);
 
-    if (attachedImages.length && node.id !== editingId) {
+    if (attachedImages.length) {
+      const image = latestNodeImage(node);
       const imageBadge = document.createElement("button");
       imageBadge.type = "button";
       imageBadge.className = "node-image-badge";
       imageBadge.dataset.action = "view-node-image";
       imageBadge.dataset.id = node.id;
+      imageBadge.dataset.imagePath = image.src;
       imageBadge.title = attachedImages.length > 1 ? `查看图片（${attachedImages.length} 张）` : "查看图片";
       imageBadge.setAttribute("aria-label", imageBadge.title);
-      imageBadge.innerHTML = "<span></span>";
+      const thumbnail = document.createElement("img");
+      thumbnail.alt = image.name || "图片";
+      thumbnail.dataset.imagePath = image.src;
+      if (isInlineDocumentImageSource(image.src)) thumbnail.src = image.src;
+      const fallback = document.createElement("span");
+      fallback.setAttribute("aria-hidden", "true");
+      imageBadge.append(thumbnail, fallback);
       element.append(imageBadge);
     }
 
@@ -805,6 +817,7 @@ function render() {
   });
 
   requestAnimationFrame(drawConnections);
+  hydrateNodeImageBadges();
   applyTransform();
   pasteButton.disabled = !internalClipboard;
 
@@ -1087,6 +1100,25 @@ async function hydrateMarkdownImages() {
   }));
 }
 
+async function hydrateNodeImageBadges() {
+  const token = ++nodeImagePreviewToken;
+  const badges = [...nodesLayer.querySelectorAll(".node-image-badge")];
+  await Promise.all(badges.map(async (badge) => {
+    const source = badge.dataset.imagePath || "";
+    const image = badge.querySelector("img");
+    if (!image) return;
+    const url = isInlineDocumentImageSource(source) ? source : await resolveDocumentImageUrl(source);
+    if (token !== nodeImagePreviewToken || !badge.isConnected) return;
+    if (url) {
+      image.src = url;
+      badge.classList.add("loaded");
+    } else {
+      image.removeAttribute("src");
+      badge.classList.remove("loaded");
+    }
+  }));
+}
+
 function renderDocumentPreview(markdown) {
   nodeDocumentPreview.innerHTML = renderMarkdown(markdown);
   if (Number.isFinite(selectedDocumentImageLine)) {
@@ -1349,6 +1381,10 @@ function finishEditing() {
   editingId = null;
   hintText.textContent = "双击主题进行编辑";
   render();
+  if (nodeImagePastePendingIds.has(finishedId)) {
+    nodeImagePastePendingIds.delete(finishedId);
+    showStatus("图片已生成为链接，点击缩略图可查看原图", 2600);
+  }
   viewport.focus({ preventScroll: true });
 }
 
@@ -1434,7 +1470,7 @@ function copySelectedSubtree() {
   const copiedIds = new Set(rootIds.flatMap((id) => [id, ...descendantsOf(id)]));
   internalClipboard = {
     rootIds,
-    nodes: nodes.filter((node) => copiedIds.has(node.id)).map((node) => ({ ...node })),
+    nodes: cloneNodes(nodes.filter((node) => copiedIds.has(node.id))),
   };
   pasteButton.disabled = false;
   showStatus(`已复制 ${internalClipboard.nodes.length} 个主题`);
@@ -1504,6 +1540,7 @@ function undo() {
   if (!selectedIds.size) selectedIds.add(selectedId);
   updateHistoryButtons();
   render();
+  markSaving();
 }
 
 function redo() {
@@ -1516,6 +1553,7 @@ function redo() {
   if (!selectedIds.size) selectedIds.add(selectedId);
   updateHistoryButtons();
   render();
+  markSaving();
 }
 
 function setZoom(nextZoom) {
@@ -2012,7 +2050,7 @@ async function insertDocumentImageFile(file) {
   }
 }
 
-async function attachImageToNode(file, nodeId = selectedId) {
+async function attachImageToNode(file, nodeId = selectedId, { fromPaste = false } = {}) {
   const node = getNode(nodeId);
   if (!node) return false;
   try {
@@ -2030,7 +2068,12 @@ async function attachImageToNode(file, nodeId = selectedId) {
     selectedIds = new Set([node.id]);
     render();
     markSaving();
-    showStatus(`图片已添加到“${node.text || "主题"}”`);
+    if (fromPaste) {
+      nodeImagePastePendingIds.add(node.id);
+      showStatus("图片已保存，按 Enter 完成后生成链接", 2600);
+    } else {
+      showStatus(`图片已添加到“${node.text || "主题"}”`);
+    }
     return true;
   } catch (error) {
     console.error(error);
@@ -2050,6 +2093,13 @@ async function openNodeImage(nodeId) {
   const image = latestNodeImage(node);
   if (!image) return;
   await openImageViewer(image.src, image.name || node?.text || "");
+}
+
+function chooseNodeImage(nodeId = selectedId) {
+  const node = getNode(nodeId);
+  if (!node || !nodeImageInput) return;
+  pendingNodeImageTargetId = node.id;
+  nodeImageInput.click();
 }
 
 async function workspaceFileChangedExternally(handle, name) {
@@ -2271,7 +2321,7 @@ function hideNodeLinkMenu() {
   if (nodeLinkMenu) nodeLinkMenu.hidden = true;
 }
 
-function renderNodeLinkMenu(nodeId) {
+function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
   const menu = ensureNodeLinkMenu();
   const node = getNode(nodeId);
   menu.replaceChildren();
@@ -2279,8 +2329,28 @@ function renderNodeLinkMenu(nodeId) {
 
   const title = document.createElement("div");
   title.className = "node-link-menu-title";
-  title.textContent = `链接“${node.text || "主题"}”`;
+  title.textContent = `“${node.text || "主题"}”`;
   menu.append(title);
+
+  const insertImage = document.createElement("button");
+  insertImage.type = "button";
+  insertImage.className = "node-link-menu-item";
+  insertImage.dataset.action = "insert-node-image";
+  insertImage.dataset.nodeId = nodeId;
+  insertImage.textContent = "插入图片";
+  const openDocument = document.createElement("button");
+  openDocument.type = "button";
+  openDocument.className = "node-link-menu-item";
+  openDocument.dataset.action = "open-document";
+  openDocument.dataset.nodeId = nodeId;
+  openDocument.textContent = "打开文档";
+  const showFilesButton = document.createElement("button");
+  showFilesButton.type = "button";
+  showFilesButton.className = "node-link-menu-item";
+  showFilesButton.dataset.action = "show-link-files";
+  showFilesButton.dataset.nodeId = nodeId;
+  showFilesButton.textContent = "链接到思维导图";
+  menu.append(insertImage, openDocument, showFilesButton);
 
   if (isLinkedNode(node)) {
     const linkedEntry = workspaceFileByName(node.mapLink.fileName || node.mapLink.name);
@@ -2303,6 +2373,14 @@ function renderNodeLinkMenu(nodeId) {
   const divider = document.createElement("div");
   divider.className = "node-link-menu-divider";
   menu.append(divider);
+
+  if (!showFiles) {
+    const hint = document.createElement("div");
+    hint.className = "node-link-menu-empty";
+    hint.textContent = "选择一个操作。文件列表只在链接思维导图时展开。";
+    menu.append(hint);
+    return;
+  }
 
   if (!workspaceTree.length) {
     const empty = document.createElement("div");
@@ -2944,6 +3022,16 @@ nodesLayer.addEventListener("input", (event) => {
   markSaving();
 });
 
+nodesLayer.addEventListener("paste", async (event) => {
+  if (!editingId || !event.target.matches(".topic-label")) return;
+  const imageFile = pastedImageFile(event);
+  if (!imageFile) return;
+  event.preventDefault();
+  event.stopPropagation();
+  syncEditingText();
+  await attachImageToNode(imageFile, editingId, { fromPaste: true });
+});
+
 nodesLayer.addEventListener("keydown", (event) => {
   if (!editingId) return;
   const command = event.ctrlKey || event.metaKey;
@@ -3384,6 +3472,16 @@ document.addEventListener("click", async (event) => {
     setSelection([nodeId], nodeId);
     linkSelectedNodeToWorkspaceFile(item.dataset.name);
     hideNodeLinkMenu();
+  } else if (item.dataset.action === "insert-node-image") {
+    setSelection([nodeId], nodeId);
+    hideNodeLinkMenu();
+    chooseNodeImage(nodeId);
+  } else if (item.dataset.action === "open-document") {
+    hideNodeLinkMenu();
+    openNodeDocument(nodeId);
+  } else if (item.dataset.action === "show-link-files") {
+    if (!workspaceFiles.length && workspaceDirectoryHandle) await refreshWorkspaceFiles();
+    renderNodeLinkMenu(nodeId, { showFiles: true });
   } else if (item.dataset.action === "open-linked") {
     hideNodeLinkMenu();
     await followNodeMapLink(nodeId);
@@ -3392,12 +3490,12 @@ document.addEventListener("click", async (event) => {
     hideNodeLinkMenu();
   } else if (item.dataset.action === "refresh-files") {
     await refreshWorkspaceFiles();
-    renderNodeLinkMenu(nodeId);
+    renderNodeLinkMenu(nodeId, { showFiles: true });
   } else if (item.dataset.action === "toggle-link-folder") {
     const path = item.dataset.path;
     if (expandedWorkspaceFolders.has(path)) expandedWorkspaceFolders.delete(path);
     else expandedWorkspaceFolders.add(path);
-    renderNodeLinkMenu(nodeId);
+    renderNodeLinkMenu(nodeId, { showFiles: true });
   }
 });
 mapReturnButton.addEventListener("click", () => {
@@ -3634,6 +3732,14 @@ documentImageInput.addEventListener("change", () => {
   const file = documentImageInput.files?.[0];
   if (!file) return;
   insertDocumentImageFile(file);
+});
+nodeImageInput?.addEventListener("change", async () => {
+  const file = nodeImageInput.files?.[0];
+  const targetId = pendingNodeImageTargetId || selectedId;
+  pendingNodeImageTargetId = null;
+  nodeImageInput.value = "";
+  if (!file) return;
+  await attachImageToNode(file, targetId);
 });
 documentImageViewer.addEventListener("click", (event) => {
   if (event.target === documentImageViewer) closeDocumentImageViewer();

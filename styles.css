@@ -1312,18 +1312,19 @@ textarea:focus-visible {
 
 .node-image-badge {
   position: absolute;
-  left: 7px;
-  top: 7px;
+  left: 6px;
+  top: 6px;
   display: inline-grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 34px;
+  height: 28px;
   padding: 0;
   border: 1px solid rgba(64, 133, 119, 0.24);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--shadow-xs);
   cursor: zoom-in;
+  overflow: hidden;
 }
 
 .node-image-badge:hover {
@@ -1332,12 +1333,27 @@ textarea:focus-visible {
   transform: translateY(-1px);
 }
 
+.node-image-badge img {
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.node-image-badge.loaded img {
+  display: block;
+}
+
 .node-image-badge span {
   position: relative;
   width: 12px;
   height: 10px;
   border: 1.7px solid #3f897d;
   border-radius: 2px;
+}
+
+.node-image-badge.loaded span {
+  display: none;
 }
 
 .node-image-badge span::before {
