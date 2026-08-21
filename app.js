@@ -1884,7 +1884,7 @@ function renderWorkspaceFiles() {
       if (entry.kind === "directory") {
         const row = document.createElement("button");
         row.type = "button";
-        row.className = `workspace-tree-row folder${entry.children.length ? "" : " empty"}`;
+        row.className = "workspace-tree-row folder";
         row.dataset.action = "toggle-folder";
         row.dataset.path = entry.path;
         row.style.setProperty("--tree-depth", depth);
@@ -1898,24 +1898,6 @@ function renderWorkspaceFiles() {
         row.append(chevron, label);
         workspaceFileList.append(row);
         if (expandedWorkspaceFolders.has(entry.path)) renderEntries(entry.children, depth + 1);
-        return;
-      }
-
-      if (entry.kind === "unsupported") {
-        const item = document.createElement("div");
-        item.className = "workspace-tree-row unsupported";
-        item.title = `${entry.path} 不是可打开的思维导图文件`;
-        item.style.setProperty("--tree-depth", depth);
-
-        const name = document.createElement("span");
-        name.className = "workspace-file-name unsupported";
-        name.textContent = entry.name;
-
-        const kind = document.createElement("span");
-        kind.className = "workspace-file-kind";
-        kind.textContent = "非 map";
-        item.append(name, kind);
-        workspaceFileList.append(item);
         return;
       }
 
@@ -1983,13 +1965,10 @@ async function refreshWorkspaceFiles() {
             handle,
             children: await scanDirectory(handle, path),
           };
-          entries.push(directoryEntry);
+          if (directoryEntry.children.length) entries.push(directoryEntry);
           continue;
         }
-        if (!isJsonFileName(name)) {
-          entries.push({ kind: "unsupported", name, path, handle });
-          continue;
-        }
+        if (!isJsonFileName(name)) continue;
         const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题", fingerprint: "" };
         try {
           const file = await handle.getFile();
@@ -2001,10 +1980,7 @@ async function refreshWorkspaceFiles() {
           item.preview = data.nodes.find((node) => node.id === "root")?.text || "主题";
           item.fingerprint = projectFingerprint(raw);
         } catch {
-          if (!isDedicatedMindmapFileName(name)) {
-            entries.push({ kind: "unsupported", name, path, handle });
-            continue;
-          }
+          if (!isDedicatedMindmapFileName(name)) continue;
           item.title = name;
         }
         workspaceFiles.push(item);
@@ -2012,7 +1988,7 @@ async function refreshWorkspaceFiles() {
         entries.push(item);
       }
       entries.sort((a, b) => {
-        const order = { directory: 0, file: 1, unsupported: 2 };
+        const order = { directory: 0, file: 1 };
         if (a.kind !== b.kind) return (order[a.kind] ?? 9) - (order[b.kind] ?? 9);
         return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
       });
