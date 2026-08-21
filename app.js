@@ -1752,9 +1752,7 @@ function updateWorkspaceUi() {
   const savedName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_NAME_KEY) : "";
   const supported = Boolean(window.showDirectoryPicker && window.showOpenFilePicker && window.showSaveFilePicker);
   workspaceFolderName.textContent = workspaceDirectoryHandle?.name || savedName || "未选择文件夹";
-  workspaceFolderStatus.textContent = supported
-    ? workspaceDirectoryHandle ? "打开/保存默认使用此位置" : "选择后作为打开/保存默认位置"
-    : "当前浏览器不支持目录授权，使用普通文件选择";
+  updateWorkspaceStatusText({ supported });
   const collapsed = localStorageAvailable() && localStorage.getItem(WORKSPACE_COLLAPSED_KEY) === "true";
   workspaceSidebar.classList.toggle("collapsed", collapsed);
   workspaceCollapseButton.title = collapsed ? "展开工作目录" : "收起工作目录";
@@ -1764,6 +1762,27 @@ function updateWorkspaceUi() {
     document.documentElement.style.setProperty("--workspace-sidebar-width", `${width}px`);
   }
   renderWorkspaceFiles();
+}
+
+function workspaceCurrentFileLabel() {
+  if (!currentWorkspaceFileName) return "";
+  const entry = workspaceFileByName(currentWorkspaceFileName);
+  const displayName = entry ? workspaceEntryDisplayName(entry) : currentWorkspaceFileName.split("/").filter(Boolean).at(-1);
+  return displayName || currentWorkspaceFileName;
+}
+
+function updateWorkspaceStatusText({ supported = Boolean(window.showDirectoryPicker && window.showOpenFilePicker && window.showSaveFilePicker) } = {}) {
+  if (!workspaceFolderStatus) return;
+  if (!supported) {
+    workspaceFolderStatus.textContent = "当前浏览器不支持目录授权，使用普通文件选择";
+    return;
+  }
+  if (!workspaceDirectoryHandle) {
+    workspaceFolderStatus.textContent = "选择后作为打开/保存默认位置";
+    return;
+  }
+  const currentFile = workspaceCurrentFileLabel();
+  workspaceFolderStatus.textContent = currentFile ? `当前：${currentFile}` : "打开/保存默认使用此位置";
 }
 
 function setWorkspaceCollapsed(collapsed, { persist = true } = {}) {
@@ -1839,6 +1858,7 @@ function pathDepth(path) {
 
 function renderWorkspaceFiles() {
   if (!workspaceFileList) return;
+  updateWorkspaceStatusText();
   workspaceFileList.replaceChildren();
   if (!workspaceDirectoryHandle) {
     const empty = document.createElement("div");
@@ -3022,6 +3042,8 @@ async function openProject(
     }
     applyProjectData(data, { localId: projectLocalId, status, markDirty });
     if (markDirty) await autosaveLocal();
+    updateWorkspaceStatusText();
+    renderWorkspaceFiles();
     updateMapReturnButton();
     return true;
   } catch (error) {
