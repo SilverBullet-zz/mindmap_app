@@ -11,6 +11,8 @@ const WORKSPACE_WIDTH_KEY = "zhitu.workspaceWidth.v1";
 const WORKSPACE_COLLAPSED_KEY = "zhitu.workspaceCollapsed.v1";
 const WORKSPACE_CURRENT_FILE_KEY = "zhitu.workspaceCurrentFile.v1";
 const WORKSPACE_FILE_EXTENSIONS = [".mindmap.json", ".json"];
+const WORKSPACE_TRASH_DIR = ".mindmap_trash";
+const WORKSPACE_TRASH_FORMAT = "mindmap-trash";
 const AUTOSAVE_INTERVAL = 5000;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 1.6;
@@ -119,6 +121,7 @@ let workspaceDirectoryHandle = null;
 let workspaceResize = null;
 let workspaceFiles = [];
 let workspaceHomeItems = [];
+let workspaceTrashItems = [];
 let workspaceTree = [];
 let expandedWorkspaceFolders = new Set();
 let currentWorkspaceFileName = null;
@@ -1844,6 +1847,7 @@ function renderWorkspaceFiles() {
 async function refreshWorkspaceFiles() {
   workspaceFiles = [];
   workspaceHomeItems = [];
+  workspaceTrashItems = [];
   workspaceTree = [];
   if (!workspaceDirectoryHandle) {
     renderWorkspaceFiles();
@@ -1861,6 +1865,7 @@ async function refreshWorkspaceFiles() {
       for await (const [name, handle] of directoryHandle.entries()) {
         const path = joinWorkspacePath(parentPath, name);
         if (handle.kind === "directory") {
+          if (!parentPath && name === WORKSPACE_TRASH_DIR) continue;
           const directoryEntry = {
             kind: "directory",
             name,
@@ -1895,10 +1900,15 @@ async function refreshWorkspaceFiles() {
     };
 
     workspaceTree = await scanDirectory(workspaceDirectoryHandle);
+    workspaceTrashItems = await scanWorkspaceTrash();
     workspaceFiles.sort((a, b) => a.path.localeCompare(b.path, "zh-CN", { numeric: true }));
     workspaceHomeItems.sort((a, b) => {
       const time = new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
       return time || a.path.localeCompare(b.path, "zh-CN", { numeric: true });
+    });
+    workspaceTrashItems.sort((a, b) => {
+      const time = new Date(b.deletedAt || 0).getTime() - new Date(a.deletedAt || 0).getTime();
+      return time || a.name.localeCompare(b.name, "zh-CN", { numeric: true });
     });
     renderWorkspaceFiles();
     renderHomeList();
@@ -1916,6 +1926,42 @@ function workspaceFileByName(name) {
 
 function workspaceEntryDisplayName(entry) {
   return entry?.title || entry?.preview || entry?.name || "未命名思维导图";
+}
+
+async function scanWorkspaceTrash() {
+  if (!workspaceDirectoryHandle) return [];
+  let trashDirectory;
+  try {
+    trashDirectory = await workspaceDirectoryHandle.getDirectoryHandle(WORKSPACE_TRASH_DIR);
+  } catch {
+    return [];
+  }
+  const items = [];
+  for await (const [name, handle] of trashDirectory.entries()) {
+    if (handle.kind !== "file" || !name.endsWith(".json")) continue;
+    try {
+      const file = await handle.getFile();
+      const raw = JSON.parse(await file.text());
+      if (raw?.format !== WORKSPACE_TRASH_FORMAT || raw?.version !== 1 || !raw?.data) continue;
+      const data = normalizeProject(raw.data);
+      items.push({
+        id: name,
+        name,
+        path: `${WORKSPACE_TRASH_DIR}/${name}`,
+        handle,
+        title: raw.title || data.title || "未命名思维导图",
+        deletedAt: raw.deletedAt || (file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString()),
+        originalPath: raw.originalPath || raw.originalName || "",
+        updatedAt: raw.updatedAt || raw.data?.savedAt || "",
+        nodeCount: data.nodes.length,
+        preview: data.nodes.find((node) => node.id === "root")?.text || "主题",
+        data: raw.data,
+      });
+    } catch {
+      // Ignore malformed trash entries instead of blocking the whole folder.
+    }
+  }
+  return items;
 }
 
 function safeFileBaseName(value) {
@@ -1938,6 +1984,17 @@ async function uniqueWorkspaceFileName(baseName) {
   let index = 2;
   while (existing.has(name.toLocaleLowerCase())) {
     name = `${base}-${index}.mindmap.json`;
+    index += 1;
+  }
+  return name;
+}
+
+async function uniqueDirectoryFileName(directoryHandle, baseName, extension = ".json") {
+  const base = safeFileBaseName(baseName);
+  let name = `${base}${extension}`;
+  let index = 2;
+  while (await workspaceFileExists(directoryHandle, name)) {
+    name = `${base}-${index}${extension}`;
     index += 1;
   }
   return name;
@@ -2735,49 +2792,68 @@ function formatLocalTime(value) {
 
 function renderHomeList() {
   if (!homeList) return;
-  const isTrash = false;
-  const index = workspaceDirectoryHandle ? workspaceHomeItems : [];
+  const isTrash = homeMode === "trash";
+  const index = workspaceDirectoryHandle ? isTrash ? workspaceTrashItems : workspaceHomeItems : [];
   if (trashButton) {
-    trashButton.hidden = true;
-    trashButton.setAttribute("aria-pressed", "false");
+    trashButton.hidden = !workspaceDirectoryHandle;
+    trashButton.setAttribute("aria-pressed", String(isTrash));
+    trashButton.textContent = isTrash ? "返回文件" : "垃圾桶";
   }
   homeList.replaceChildren();
   if (!index.length) {
     const empty = document.createElement("div");
     empty.className = "home-empty";
     empty.innerHTML = workspaceDirectoryHandle
-      ? "<strong>工作目录中还没有思维导图</strong><span>当前画布会每 5 秒自动保存到这个文件夹，并出现在这里。</span>"
+      ? isTrash
+        ? "<strong>垃圾桶是空的</strong><span>删除的思维导图会先移动到工作目录的 .mindmap_trash 文件夹。</span>"
+        : "<strong>工作目录中还没有思维导图</strong><span>当前画布会每 5 秒自动保存到这个文件夹，并出现在这里。</span>"
       : "<strong>还没有选择工作目录</strong><span>首页只显示当前 Working Folder 中的思维导图。</span>";
     homeList.append(empty);
     return;
   }
   index.forEach((item) => {
     const card = document.createElement("article");
-    const current = item.path === currentWorkspaceFileName;
-    card.className = `home-card${current ? " current" : ""}`;
+    const current = !isTrash && item.path === currentWorkspaceFileName;
+    card.className = `home-card${current ? " current" : ""}${isTrash ? " trashed" : ""}`;
     card.dataset.id = item.id;
     if (item.path) card.dataset.name = item.path;
 
     const title = document.createElement("strong");
     title.textContent = item.title || "未命名思维导图";
     const meta = document.createElement("span");
-    meta.textContent = `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${workspacePathDirectory(item.path) || "工作目录"}`;
+    meta.textContent = isTrash
+      ? `${item.nodeCount || 0} 个主题 · 删除于 ${formatLocalTime(item.deletedAt)} · 原位置：${item.originalPath || "未知"}`
+      : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${workspacePathDirectory(item.path) || "工作目录"}`;
     const preview = document.createElement("small");
     preview.textContent = item.preview || "主题";
 
     const actions = document.createElement("div");
     actions.className = "home-card-actions";
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "secondary-button";
-    open.dataset.action = "open";
-    open.textContent = "打开";
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "text-button danger";
-    remove.dataset.action = "delete";
-    remove.textContent = "删除文件";
-    actions.append(open, remove);
+    if (isTrash) {
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.className = "secondary-button";
+      restore.dataset.action = "restore";
+      restore.textContent = "恢复";
+      const purge = document.createElement("button");
+      purge.type = "button";
+      purge.className = "text-button danger";
+      purge.dataset.action = "purge";
+      purge.textContent = "彻底删除";
+      actions.append(restore, purge);
+    } else {
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "secondary-button";
+      open.dataset.action = "open";
+      open.textContent = "打开";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "text-button danger";
+      remove.dataset.action = "delete";
+      remove.textContent = "移到垃圾桶";
+      actions.append(open, remove);
+    }
     card.append(title, meta, preview, actions);
     homeList.append(card);
   });
@@ -2809,6 +2885,46 @@ function openLocalMap(id, { keepHomeOpen = false } = {}) {
   });
 }
 
+async function writeWorkspaceTrashEntry(entry) {
+  const file = await entry.handle.getFile();
+  const raw = JSON.parse(await file.text());
+  const data = normalizeProject(raw);
+  const trashDirectory = await workspaceDirectoryHandle.getDirectoryHandle(WORKSPACE_TRASH_DIR, { create: true });
+  const trashName = await uniqueDirectoryFileName(
+    trashDirectory,
+    `${Date.now()} ${workspaceEntryDisplayName(entry)}`,
+    ".mindmap-trash.json"
+  );
+  const trashHandle = await trashDirectory.getFileHandle(trashName, { create: true });
+  const payload = {
+    format: WORKSPACE_TRASH_FORMAT,
+    version: 1,
+    deletedAt: new Date().toISOString(),
+    originalPath: entry.path,
+    originalName: entry.name,
+    title: data.title || workspaceEntryDisplayName(entry),
+    updatedAt: entry.updatedAt || raw.savedAt || "",
+    data: raw,
+  };
+  const writable = await trashHandle.createWritable();
+  await writable.write(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" }));
+  await writable.close();
+  return { trashName, payload };
+}
+
+function resetToUnsavedDefaultMap(status = "已移到垃圾桶") {
+  currentWorkspaceFileName = null;
+  currentWorkspaceFileModifiedAt = 0;
+  workspaceConflictPaused = false;
+  workspaceConflictFileName = null;
+  applyProjectData({
+    title: "主题",
+    nodes: createDefaultNodes(),
+    view: { zoom: 1, pan: { x: 0, y: 0 } },
+  }, { localId: createLocalId(), status, markDirty: false });
+  updateMapReturnButton();
+}
+
 async function deleteWorkspaceMapFile(name) {
   const entry = workspaceFileByName(name);
   const title = entry?.title || name;
@@ -2817,12 +2933,13 @@ async function deleteWorkspaceMapFile(name) {
     await refreshWorkspaceFiles();
     return;
   }
-  if (!window.confirm(`确认删除“${title}”吗？\n\n这会从当前工作目录中移除该文件。`)) return;
+  if (!window.confirm(`确认将“${title}”移到垃圾桶吗？\n\n文件会移动到工作目录的 ${WORKSPACE_TRASH_DIR} 文件夹，可在首页垃圾桶中恢复。`)) return;
   try {
     if (!await ensureWorkspacePermission("readwrite")) {
       showStatus("需要授权工作目录", 2200);
       return;
     }
+    await writeWorkspaceTrashEntry(entry);
     const parts = String(name || "").split("/").filter(Boolean);
     let directory = workspaceDirectoryHandle;
     for (const folder of parts.slice(0, -1)) {
@@ -2830,20 +2947,13 @@ async function deleteWorkspaceMapFile(name) {
     }
     await directory.removeEntry(parts.at(-1));
     if (currentWorkspaceFileName === name) {
-      currentWorkspaceFileName = null;
-      const next = workspaceFiles.find((file) => file.path !== name);
-      if (next) {
-        await openWorkspaceMapFile(next.path, { keepHomeOpen: true });
-      } else {
-        newLocalMap({ keepHomeOpen: true });
-        await autosaveLocal({ silent: true });
-      }
+      resetToUnsavedDefaultMap();
     }
     await refreshWorkspaceFiles();
-    showStatus("已从工作目录删除");
+    showStatus("已移到垃圾桶");
   } catch (error) {
     console.error(error);
-    showStatus("无法删除工作目录文件", 2200);
+    showStatus("无法移到垃圾桶，文件未删除", 2600);
   }
 }
 
@@ -2902,7 +3012,49 @@ function deleteLocalMap(id) {
   renderHomeList();
 }
 
+async function restoreWorkspaceTrashItem(id) {
+  const entry = workspaceTrashItems.find((item) => item.id === id || item.path === id);
+  if (!workspaceDirectoryHandle || !entry) {
+    showStatus("垃圾桶中找不到此文件", 2200);
+    await refreshWorkspaceFiles();
+    return;
+  }
+  try {
+    if (!await ensureWorkspacePermission("readwrite")) {
+      showStatus("需要授权工作目录", 2200);
+      return;
+    }
+    const originalPath = entry.originalPath || `${safeFileBaseName(entry.title)}.mindmap.json`;
+    const parts = String(originalPath).split("/").filter(Boolean);
+    let directory = workspaceDirectoryHandle;
+    for (const folder of parts.slice(0, -1)) {
+      directory = await directory.getDirectoryHandle(folder, { create: true });
+    }
+    const originalName = parts.at(-1) || `${safeFileBaseName(entry.title)}.mindmap.json`;
+    const baseName = originalName.replace(/(?:\.mindmap)?\.json$/i, "");
+    const extension = originalName.toLocaleLowerCase().endsWith(".mindmap.json") ? ".mindmap.json" : ".json";
+    const restoredName = await uniqueDirectoryFileName(directory, baseName, extension);
+    const restoredHandle = await directory.getFileHandle(restoredName, { create: true });
+    const writable = await restoredHandle.createWritable();
+    await writable.write(new Blob([JSON.stringify(entry.data, null, 2)], { type: "application/json;charset=utf-8" }));
+    await writable.close();
+
+    const trashDirectory = await workspaceDirectoryHandle.getDirectoryHandle(WORKSPACE_TRASH_DIR);
+    await trashDirectory.removeEntry(entry.name);
+    homeMode = "maps";
+    await refreshWorkspaceFiles();
+    const restoredPath = joinWorkspacePath(workspacePathDirectory(originalPath), restoredName);
+    await openWorkspaceMapFile(restoredPath, { restore: true });
+    renderHomeList();
+    showStatus(restoredName === originalName ? "已从垃圾桶恢复" : `已恢复为 ${restoredName}`, 2600);
+  } catch (error) {
+    console.error(error);
+    showStatus("无法恢复此文件", 2200);
+  }
+}
+
 function restoreLocalMap(id) {
+  if (workspaceDirectoryHandle) return restoreWorkspaceTrashItem(id);
   const trash = readLocalTrash();
   const entry = trash.find((item) => item.id === id);
   if (!entry?.data) {
@@ -2929,7 +3081,32 @@ function restoreLocalMap(id) {
   }
 }
 
+async function purgeWorkspaceTrashItem(id) {
+  const entry = workspaceTrashItems.find((item) => item.id === id || item.path === id);
+  const title = entry?.title || "此思维导图";
+  if (!workspaceDirectoryHandle || !entry) {
+    showStatus("垃圾桶中找不到此文件", 2200);
+    await refreshWorkspaceFiles();
+    return;
+  }
+  if (!window.confirm(`彻底删除“${title}”吗？\n\n这会删除 ${WORKSPACE_TRASH_DIR} 中的备份，无法恢复。`)) return;
+  try {
+    if (!await ensureWorkspacePermission("readwrite")) {
+      showStatus("需要授权工作目录", 2200);
+      return;
+    }
+    const trashDirectory = await workspaceDirectoryHandle.getDirectoryHandle(WORKSPACE_TRASH_DIR);
+    await trashDirectory.removeEntry(entry.name);
+    await refreshWorkspaceFiles();
+    showStatus("已彻底删除");
+  } catch (error) {
+    console.error(error);
+    showStatus("无法彻底删除", 2200);
+  }
+}
+
 function purgeLocalMap(id) {
+  if (workspaceDirectoryHandle) return purgeWorkspaceTrashItem(id);
   const entry = readLocalTrash().find((item) => item.id === id);
   const title = entry?.title || "此思维导图";
   if (!window.confirm(`彻底删除“${title}”吗？\n\n此操作无法恢复。`)) return;
