@@ -606,23 +606,27 @@ function focusSearchMode() {
   if (searchState.query.trim()) renderSearchResults();
 }
 
-function jumpToSearchResult(key) {
+async function jumpToSearchResult(key) {
   const result = searchState.results.find((item) => item.key === key);
   if (!result) return;
   if (result.mapId !== currentLocalId) {
-    openLocalMap(result.mapId, { keepHomeOpen: true });
+    const opened = await openLocalMap(result.mapId, { keepHomeOpen: true });
+    if (!opened) {
+      showStatus("无法打开搜索结果所在的思维导图", 2200);
+      return;
+    }
   }
   const node = getNode(result.nodeId);
   if (!node) return;
   revealNodePath(result.nodeId);
-  selectedId = result.nodeId;
-  selectedIds = new Set([result.nodeId]);
-  editingId = null;
+  setSelection([result.nodeId], result.nodeId);
   searchState.active = { key: result.key, nodeId: result.nodeId, mapId: result.mapId };
   searchState.jumpArmed = true;
   render();
   centerOnNode(result.nodeId);
   hintText.textContent = "按任意键返回查找";
+  renderSearchResults();
+  searchResults.hidden = false;
   viewport.focus({ preventScroll: true });
 }
 
@@ -3602,8 +3606,9 @@ async function runMapCompare() {
 }
 
 function openLocalMap(id, { keepHomeOpen = false } = {}) {
-  openWorkspaceMapFile(id).then((opened) => {
+  return openWorkspaceMapFile(id).then((opened) => {
     if (opened && !keepHomeOpen) closeHome();
+    return opened;
   });
 }
 
@@ -4553,10 +4558,14 @@ searchScopeToggle.addEventListener("click", () => {
   updateSearchResults();
   searchInput.focus({ preventScroll: true });
 });
-searchResults.addEventListener("click", (event) => {
+searchResults.addEventListener("pointerdown", (event) => {
+  if (event.target.closest(".search-result")) event.preventDefault();
+});
+searchResults.addEventListener("click", async (event) => {
   const item = event.target.closest(".search-result");
   if (!item) return;
-  jumpToSearchResult(item.dataset.key);
+  event.preventDefault();
+  await jumpToSearchResult(item.dataset.key);
 });
 document.addEventListener("pointerdown", (event) => {
   if (event.target.closest("#search-box")) return;

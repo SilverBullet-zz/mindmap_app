@@ -314,6 +314,7 @@ textarea:focus-visible {
   color: #24312b;
   text-align: left;
   cursor: pointer;
+  scroll-margin: 8px;
 }
 
 .search-result:hover,
@@ -321,6 +322,10 @@ textarea:focus-visible {
 .search-result.active {
   outline: none;
   background: #e7f8f0;
+}
+
+.search-result.active {
+  box-shadow: inset 0 0 0 1px rgba(78, 178, 154, 0.2);
 }
 
 .search-result strong,
