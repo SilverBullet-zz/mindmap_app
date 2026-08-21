@@ -197,8 +197,22 @@
         <button class="image-viewer-close" id="close-image-viewer" type="button" aria-label="关闭图片预览">×</button>
         <img id="document-image-viewer-img" alt="" />
       </section>
+
+      <section class="conflict-overlay" id="workspace-conflict-overlay" hidden aria-label="文件冲突">
+        <div class="conflict-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-conflict-title">
+          <span class="conflict-kicker">保存冲突</span>
+          <h2 id="workspace-conflict-title">这个文件已经在别处被修改</h2>
+          <p id="workspace-conflict-message"></p>
+          <div class="conflict-actions">
+            <button class="primary-button" id="conflict-save-copy" type="button">另存为副本</button>
+            <button class="secondary-button" id="conflict-overwrite" type="button">覆盖保存</button>
+            <button class="secondary-button" id="conflict-reload" type="button">载入外部版本</button>
+            <button class="text-button" id="conflict-dismiss" type="button">暂不处理</button>
+          </div>
+        </div>
+      </section>
     </div>
 
-    <script src="./app.js?v=44"></script>
+    <script src="./app.js?v=45"></script>
   </body>
 </html>

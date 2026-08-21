@@ -124,6 +124,7 @@ let expandedWorkspaceFolders = new Set();
 let currentWorkspaceFileName = null;
 let currentWorkspaceFileModifiedAt = 0;
 let workspaceConflictPaused = false;
+let workspaceConflictFileName = null;
 let autosaveWorkspacePromise = null;
 let autosaveWorkspaceQueued = false;
 let mapReturnStack = [];
@@ -192,6 +193,12 @@ const documentImageInput = document.querySelector("#document-image-input");
 const documentImageViewer = document.querySelector("#document-image-viewer");
 const documentImageViewerImg = document.querySelector("#document-image-viewer-img");
 const closeImageViewerButton = document.querySelector("#close-image-viewer");
+const workspaceConflictOverlay = document.querySelector("#workspace-conflict-overlay");
+const workspaceConflictMessage = document.querySelector("#workspace-conflict-message");
+const conflictSaveCopyButton = document.querySelector("#conflict-save-copy");
+const conflictOverwriteButton = document.querySelector("#conflict-overwrite");
+const conflictReloadButton = document.querySelector("#conflict-reload");
+const conflictDismissButton = document.querySelector("#conflict-dismiss");
 let activeDocumentId = null;
 
 function cloneNodes(source = nodes) {
@@ -1676,6 +1683,7 @@ async function initializeWorkspaceDirectory() {
   currentWorkspaceFileName = null;
   currentWorkspaceFileModifiedAt = 0;
   workspaceConflictPaused = false;
+  workspaceConflictFileName = null;
   if (localStorageAvailable()) localStorage.removeItem(WORKSPACE_CURRENT_FILE_KEY);
 }
 
@@ -2047,28 +2055,31 @@ async function openNodeImage(nodeId) {
 async function workspaceFileChangedExternally(handle, name) {
   if (!currentWorkspaceFileModifiedAt || name !== currentWorkspaceFileName) return false;
   const file = await handle.getFile();
-  return file.lastModified > currentWorkspaceFileModifiedAt + 1200;
+  if (file.lastModified <= currentWorkspaceFileModifiedAt + 1200) return false;
+  return {
+    fileName: name,
+    externalModifiedAt: file.lastModified,
+    localKnownModifiedAt: currentWorkspaceFileModifiedAt,
+  };
 }
 
-function confirmWorkspaceConflictOverwrite(name) {
-  return window.confirm(
-    `检测到“${name}”已经被另一个窗口或页面修改。\n\n` +
-    "如果继续保存，会覆盖那个版本。\n\n" +
-    "点击“确定”覆盖文件；点击“取消”暂停保存。"
-  );
+function workspaceConflictError(conflict) {
+  const error = new Error("WORKSPACE_FILE_CONFLICT");
+  error.fileName = conflict.fileName;
+  error.externalModifiedAt = conflict.externalModifiedAt;
+  error.localKnownModifiedAt = conflict.localKnownModifiedAt;
+  return error;
 }
 
-async function writeWorkspaceProjectFile(name, data, { confirmConflict = false } = {}) {
+async function writeWorkspaceProjectFile(name, data, { allowOverwrite = false } = {}) {
   if (!workspaceDirectoryHandle) return false;
   if (!await ensureWorkspacePermission("readwrite")) return false;
   const handle = await getWorkspaceFileHandleByPath(name, { create: true });
-  if (await workspaceFileChangedExternally(handle, name)) {
+  const conflict = await workspaceFileChangedExternally(handle, name);
+  if (conflict && !allowOverwrite) {
     workspaceConflictPaused = true;
-    if (!confirmConflict || !confirmWorkspaceConflictOverwrite(name)) {
-      const error = new Error("WORKSPACE_FILE_CONFLICT");
-      error.fileName = name;
-      throw error;
-    }
+    workspaceConflictFileName = name;
+    throw workspaceConflictError(conflict);
   }
   const writable = await handle.createWritable();
   await writable.write(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }));
@@ -2076,12 +2087,96 @@ async function writeWorkspaceProjectFile(name, data, { confirmConflict = false }
   currentWorkspaceFileName = name;
   currentWorkspaceFileModifiedAt = (await handle.getFile()).lastModified || Date.now();
   workspaceConflictPaused = false;
+  workspaceConflictFileName = null;
   if (localStorageAvailable()) localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, name);
   return true;
 }
 
+function formatConflictTime(value) {
+  const date = new Date(value || 0);
+  if (Number.isNaN(date.getTime())) return "未知时间";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function showWorkspaceConflictDialog(error) {
+  workspaceConflictPaused = true;
+  workspaceConflictFileName = error?.fileName || currentWorkspaceFileName;
+  if (!workspaceConflictOverlay || !workspaceConflictMessage) return;
+  workspaceConflictMessage.textContent =
+    `“${workspaceConflictFileName || "当前文件"}”在你打开后被另一个窗口或页面修改过。` +
+    `外部修改时间：${formatConflictTime(error?.externalModifiedAt)}。` +
+    "自动保存已暂停，避免覆盖那个版本。";
+  workspaceConflictOverlay.hidden = false;
+  conflictSaveCopyButton?.focus({ preventScroll: true });
+}
+
+function hideWorkspaceConflictDialog() {
+  if (workspaceConflictOverlay) workspaceConflictOverlay.hidden = true;
+  viewport.focus({ preventScroll: true });
+}
+
+async function overwriteWorkspaceConflict() {
+  if (!workspaceConflictFileName) return;
+  try {
+    const data = projectData();
+    data.localId = currentLocalId;
+    const saved = await writeWorkspaceProjectFile(workspaceConflictFileName, data, { allowOverwrite: true });
+    if (!saved) return;
+    autosaveDirty = false;
+    hideWorkspaceConflictDialog();
+    await refreshWorkspaceFiles();
+    showStatus("已覆盖保存当前版本");
+  } catch (error) {
+    console.error(error);
+    showStatus("覆盖保存失败", 2200);
+  }
+}
+
+async function saveWorkspaceConflictCopy() {
+  try {
+    const data = projectData();
+    data.localId = currentLocalId;
+    const base = `${defaultFileBaseName()} 副本`;
+    const copyName = await uniqueWorkspaceFileName(base);
+    const saved = await writeWorkspaceProjectFile(copyName, data, { allowOverwrite: false });
+    if (!saved) return;
+    autosaveDirty = false;
+    hideWorkspaceConflictDialog();
+    await refreshWorkspaceFiles();
+    showStatus(`已另存为 ${copyName}`, 2600);
+  } catch (error) {
+    console.error(error);
+    showStatus("另存副本失败", 2200);
+  }
+}
+
+async function reloadWorkspaceConflictFile() {
+  const fileName = workspaceConflictFileName || currentWorkspaceFileName;
+  if (!fileName) return;
+  hideWorkspaceConflictDialog();
+  workspaceConflictPaused = false;
+  workspaceConflictFileName = null;
+  await openWorkspaceMapFile(fileName, { restore: true });
+}
+
 async function autosaveWorkspace({ silent = true } = {}) {
   if (!workspaceDirectoryHandle) return autosaveLocalStorage({ silent });
+  if (workspaceConflictPaused && currentWorkspaceFileName) {
+    autosaveDirty = true;
+    document.querySelector(".save-state").textContent = "检测到文件冲突，已暂停自动保存";
+    if (!silent) {
+      showWorkspaceConflictDialog({
+        fileName: workspaceConflictFileName || currentWorkspaceFileName,
+      });
+    }
+    return false;
+  }
   if (autosaveWorkspacePromise) {
     autosaveWorkspaceQueued = true;
     return autosaveWorkspacePromise;
@@ -2091,7 +2186,7 @@ async function autosaveWorkspace({ silent = true } = {}) {
       const data = projectData();
       data.localId = currentLocalId;
       const name = currentWorkspaceFileName || await uniqueWorkspaceFileName(defaultFileBaseName());
-      const saved = await writeWorkspaceProjectFile(name, data, { confirmConflict: !silent });
+      const saved = await writeWorkspaceProjectFile(name, data);
       if (!saved) return autosaveLocalStorage({ silent });
       autosaveDirty = false;
       window.clearTimeout(markSaving.timer);
@@ -2103,7 +2198,7 @@ async function autosaveWorkspace({ silent = true } = {}) {
         autosaveDirty = true;
         window.clearTimeout(markSaving.timer);
         document.querySelector(".save-state").textContent = "检测到文件冲突，已暂停自动保存";
-        if (!silent) showStatus("文件已被其他窗口修改，未覆盖工作目录文件", 3200);
+        showWorkspaceConflictDialog(error);
         return false;
       }
       console.error(error);
@@ -2531,6 +2626,8 @@ async function openProject(
     currentWorkspaceFileName = workspaceFileName || null;
     currentWorkspaceFileModifiedAt = workspaceFileName ? workspaceModifiedAt : 0;
     workspaceConflictPaused = false;
+    workspaceConflictFileName = null;
+    hideWorkspaceConflictDialog();
     if (currentWorkspaceFileName && localStorageAvailable()) {
       localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, currentWorkspaceFileName);
     }
@@ -2769,6 +2866,8 @@ function newLocalMap({ keepHomeOpen = false } = {}) {
   currentWorkspaceFileName = null;
   currentWorkspaceFileModifiedAt = 0;
   workspaceConflictPaused = false;
+  workspaceConflictFileName = null;
+  hideWorkspaceConflictDialog();
   applyProjectData({
     title: "主题",
     nodes: createDefaultNodes(),
@@ -4167,7 +4266,25 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest(".export-control")) closeExportMenu();
 });
 
+conflictSaveCopyButton?.addEventListener("click", saveWorkspaceConflictCopy);
+conflictOverwriteButton?.addEventListener("click", overwriteWorkspaceConflict);
+conflictReloadButton?.addEventListener("click", reloadWorkspaceConflictFile);
+conflictDismissButton?.addEventListener("click", () => {
+  hideWorkspaceConflictDialog();
+  showStatus("冲突仍未处理，自动保存保持暂停", 2400);
+});
+workspaceConflictOverlay?.addEventListener("click", (event) => {
+  if (event.target !== workspaceConflictOverlay) return;
+  hideWorkspaceConflictDialog();
+  showStatus("冲突仍未处理，自动保存保持暂停", 2400);
+});
+
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && workspaceConflictOverlay && !workspaceConflictOverlay.hidden) {
+    hideWorkspaceConflictDialog();
+    showStatus("冲突仍未处理，自动保存保持暂停", 2400);
+    return;
+  }
   if (event.key === "Escape" && !documentImageViewer.hidden) {
     closeDocumentImageViewer();
     return;

@@ -2270,6 +2270,66 @@ textarea:focus-visible {
   transform: translateY(-1px);
 }
 
+.conflict-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(25, 42, 35, 0.42);
+  backdrop-filter: blur(7px);
+  animation: overlay-fade var(--motion) both;
+}
+
+.conflict-overlay[hidden] {
+  display: none;
+}
+
+.conflict-dialog {
+  width: min(560px, 100%);
+  padding: 24px;
+  border: 1px solid #cfe4dc;
+  border-radius: 10px;
+  background: #fbfffd;
+  box-shadow: 0 24px 70px rgba(33, 67, 54, 0.24);
+  animation: panel-rise var(--motion-pop) both;
+}
+
+.conflict-kicker {
+  display: inline-flex;
+  margin-bottom: 9px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #fff3d8;
+  color: #8a5b00;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.conflict-dialog h2 {
+  margin: 0 0 10px;
+  color: #24312b;
+  font-size: 22px;
+  line-height: 1.3;
+}
+
+.conflict-dialog p {
+  margin: 0;
+  color: #54675e;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 22px;
+}
+
 @keyframes image-viewer-pop {
   0% {
     opacity: 0;
