@@ -112,7 +112,7 @@ let suppressNextClick = false;
 let animatingNodeIds = new Set();
 let editingSpaceHeld = false;
 let currentLocalId = createLocalId();
-let autosaveDirty = true;
+let autosaveDirty = false;
 let suppressAutosaveMark = false;
 let homeMode = "maps";
 let workspaceDirectoryHandle = null;
@@ -1627,10 +1627,8 @@ async function initializeWorkspaceDirectory() {
   }
   updateWorkspaceUi();
   await refreshWorkspaceFiles();
-  const savedFileName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_CURRENT_FILE_KEY) : "";
-  if (savedFileName && workspaceFileByName(savedFileName)) {
-    await openWorkspaceMapFile(savedFileName, { restore: true });
-  }
+  currentWorkspaceFileName = null;
+  if (localStorageAvailable()) localStorage.removeItem(WORKSPACE_CURRENT_FILE_KEY);
 }
 
 async function chooseWorkspaceDirectory() {
@@ -4017,7 +4015,6 @@ window.setInterval(() => {
 
 async function bootstrapApp() {
   await initializeWorkspaceDirectory();
-  if (!workspaceDirectoryHandle) restoreLastLocalMap();
   renderHomeList();
   render();
   viewport.focus();
