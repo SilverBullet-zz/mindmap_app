@@ -1852,6 +1852,10 @@ function workspacePathDirectory(path) {
   return parts.join("/");
 }
 
+function workspacePathFileName(path) {
+  return String(path || "").split("/").filter(Boolean).at(-1) || "";
+}
+
 function pathDepth(path) {
   return String(path || "").split("/").filter(Boolean).length - 1;
 }
@@ -2046,6 +2050,15 @@ function workspaceFileByName(name) {
   return workspaceFiles.find((file) => file.path === name || file.name === name);
 }
 
+function workspaceFileByLink(link) {
+  const direct = workspaceFileByName(link?.fileName || link?.name);
+  if (direct) return direct;
+  const displayName = String(link?.name || "").trim();
+  if (!displayName) return null;
+  const matches = workspaceFiles.filter((file) => workspaceEntryDisplayName(file) === displayName);
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function workspaceEntryDisplayName(entry) {
   return entry?.title || entry?.preview || entry?.name || "未命名思维导图";
 }
@@ -2115,6 +2128,25 @@ async function uniqueWorkspaceFileName(baseName) {
     index += 1;
   }
   return name;
+}
+
+async function uniqueWorkspaceFilePath(baseName, directoryPath = "", ignorePath = "") {
+  const base = safeFileBaseName(baseName);
+  const directory = String(directoryPath || "").split("/").filter(Boolean).join("/");
+  const prefix = directory ? `${directory}/` : "";
+  const ignored = String(ignorePath || "").toLocaleLowerCase();
+  const existing = new Set(
+    workspaceFiles
+      .map((file) => file.path.toLocaleLowerCase())
+      .filter((path) => path !== ignored)
+  );
+  let name = `${base}.mindmap.json`;
+  let index = 2;
+  while (existing.has(`${prefix}${name}`.toLocaleLowerCase())) {
+    name = `${base}-${index}.mindmap.json`;
+    index += 1;
+  }
+  return `${prefix}${name}`;
 }
 
 async function uniqueDirectoryFileName(directoryHandle, baseName, extension = ".json") {
@@ -2438,6 +2470,53 @@ async function writeWorkspaceProjectFile(name, data, { allowOverwrite = false } 
   return true;
 }
 
+async function removeWorkspaceFileByPath(path) {
+  const parts = String(path || "").split("/").filter(Boolean);
+  if (!parts.length || !workspaceDirectoryHandle) return false;
+  let directory = workspaceDirectoryHandle;
+  for (const folder of parts.slice(0, -1)) {
+    directory = await directory.getDirectoryHandle(folder);
+  }
+  await directory.removeEntry(parts.at(-1));
+  return true;
+}
+
+async function workspaceSaveTargetName() {
+  const base = defaultFileBaseName();
+  if (!currentWorkspaceFileName) return uniqueWorkspaceFileName(base);
+  const directory = workspacePathDirectory(currentWorkspaceFileName);
+  const desiredLeaf = `${safeFileBaseName(base)}.mindmap.json`;
+  if (workspacePathFileName(currentWorkspaceFileName).toLocaleLowerCase() === desiredLeaf.toLocaleLowerCase()) {
+    return currentWorkspaceFileName;
+  }
+  return uniqueWorkspaceFilePath(base, directory, currentWorkspaceFileName);
+}
+
+async function writeWorkspaceProjectFileWithRename(data) {
+  const previousName = currentWorkspaceFileName;
+  const targetName = await workspaceSaveTargetName();
+  if (previousName && targetName !== previousName) {
+    const previousHandle = await getWorkspaceFileHandleByPath(previousName);
+    const conflict = previousHandle ? await workspaceFileChangedExternally(previousHandle, previousName) : null;
+    if (conflict) {
+      workspaceConflictPaused = true;
+      workspaceConflictFileName = previousName;
+      throw workspaceConflictError(conflict);
+    }
+  }
+  const saved = await writeWorkspaceProjectFile(targetName, data);
+  if (saved && previousName && targetName !== previousName) {
+    try {
+      await removeWorkspaceFileByPath(previousName);
+      showStatus(`已重命名为 ${workspacePathFileName(targetName)}`, 2200);
+    } catch (error) {
+      console.error(error);
+      showStatus("已保存新文件名，旧文件未能自动删除", 3200);
+    }
+  }
+  return saved;
+}
+
 function formatConflictTime(value) {
   const date = new Date(value || 0);
   if (Number.isNaN(date.getTime())) return "未知时间";
@@ -2544,8 +2623,7 @@ async function autosaveWorkspace({ silent = true } = {}) {
     try {
       const data = projectData();
       data.localId = currentLocalId;
-      const name = currentWorkspaceFileName || await uniqueWorkspaceFileName(defaultFileBaseName());
-      const saved = await writeWorkspaceProjectFile(name, data);
+      const saved = await writeWorkspaceProjectFileWithRename(data);
       if (!saved) return autosaveLocalStorage({ silent });
       autosaveDirty = false;
       window.clearTimeout(markSaving.timer);
@@ -2671,7 +2749,7 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
   menu.append(insertImage, openDocument, showFilesButton);
 
   if (isLinkedNode(node)) {
-    const linkedEntry = workspaceFileByName(node.mapLink.fileName || node.mapLink.name);
+    const linkedEntry = workspaceFileByLink(node.mapLink);
     const linkedDisplayName = workspaceEntryDisplayName(linkedEntry) || node.mapLink.name || node.mapLink.fileName;
     const current = document.createElement("button");
     current.type = "button";
@@ -2778,8 +2856,15 @@ function unlinkNodeMap(nodeId) {
 async function followNodeMapLink(id) {
   const node = getNode(id);
   if (!isLinkedNode(node)) return false;
-  const name = node.mapLink.fileName || node.mapLink.name;
-  return openWorkspaceMapFile(name, { fromLinkNodeId: id });
+  if (!workspaceFiles.length && workspaceDirectoryHandle) await refreshWorkspaceFiles();
+  const entry = workspaceFileByLink(node.mapLink);
+  const name = entry?.path || node.mapLink.fileName || node.mapLink.name;
+  const opened = await openWorkspaceMapFile(name, { fromLinkNodeId: id });
+  if (opened && entry && node.mapLink.fileName !== entry.path) {
+    node.mapLink = { fileName: entry.path, name: workspaceEntryDisplayName(entry) };
+    markSaving();
+  }
+  return opened;
 }
 
 async function openProjectFromPicker() {
