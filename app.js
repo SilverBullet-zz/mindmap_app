@@ -18,6 +18,8 @@ const BUTTON_ZOOM_STEP = 0.1;
 const WHEEL_ZOOM_STEP = 0.08;
 const KEYBOARD_ZOOM_STEP = 0.04;
 const DEFAULT_DOCUMENT_TITLE = "未命名思维导图";
+const DOCUMENT_IMAGE_MIN_SIZE = 56;
+const DOCUMENT_IMAGE_MAX_SIZE = 1200;
 const NODE_WIDTH_RULES = {
   root: { min: 300, max: 540, seed: 300, padding: 60, fontSize: 24, fontWeight: 750 },
   branch: { min: 220, max: 420, seed: 220, padding: 54, fontSize: 16, fontWeight: 650 },
@@ -125,6 +127,10 @@ let autosaveWorkspaceQueued = false;
 let mapReturnStack = [];
 let titleEditedByUser = false;
 let nodeLinkMenu = null;
+let documentImageResize = null;
+let selectedDocumentImageLine = null;
+let documentImagePreviewToken = 0;
+const documentImageObjectUrls = new Map();
 let searchState = {
   query: "",
   caseSensitive: false,
@@ -181,6 +187,9 @@ const closeDocumentButton = document.querySelector("#close-document-button");
 const copyDocumentButton = document.querySelector("#copy-document-button");
 const insertImageButton = document.querySelector("#insert-image-button");
 const documentImageInput = document.querySelector("#document-image-input");
+const documentImageViewer = document.querySelector("#document-image-viewer");
+const documentImageViewerImg = document.querySelector("#document-image-viewer-img");
+const closeImageViewerButton = document.querySelector("#close-image-viewer");
 let activeDocumentId = null;
 
 function cloneNodes(source = nodes) {
@@ -915,6 +924,54 @@ function defaultNodeDocument(node) {
   return `# ${node?.text || "未命名主题"}\n\n`;
 }
 
+function parseMarkdownImageLine(line) {
+  const match = String(line || "").match(/^!\[([^\]]*)\]\(([^)]+)\)(?:\{([^}]+)\})?\s*$/);
+  if (!match) return null;
+  return {
+    alt: match[1],
+    src: match[2],
+    dimensions: parseImageDimensions(match[3]),
+  };
+}
+
+function parseImageDimensions(value) {
+  const dimensions = {};
+  String(value || "").replace(/(width|height)\s*=\s*(\d+)/gi, (_, key, amount) => {
+    dimensions[key.toLowerCase()] = clamp(Number(amount), DOCUMENT_IMAGE_MIN_SIZE, DOCUMENT_IMAGE_MAX_SIZE);
+    return "";
+  });
+  return dimensions;
+}
+
+function formatDocumentImageMarkdown(alt, src, dimensions = {}) {
+  const safeAlt = String(alt || "image").replace(/[\r\n\]]/g, " ").trim() || "image";
+  const safeSrc = String(src || "").replace(/[\r\n)]/g, "").trim();
+  const width = Number(dimensions.width);
+  const height = Number(dimensions.height);
+  const attrs = [
+    Number.isFinite(width) ? `width=${Math.round(clamp(width, DOCUMENT_IMAGE_MIN_SIZE, DOCUMENT_IMAGE_MAX_SIZE))}` : "",
+    Number.isFinite(height) ? `height=${Math.round(clamp(height, DOCUMENT_IMAGE_MIN_SIZE, DOCUMENT_IMAGE_MAX_SIZE))}` : "",
+  ].filter(Boolean).join(" ");
+  return `![${safeAlt}](${safeSrc})${attrs ? `{${attrs}}` : ""}`;
+}
+
+function documentImageStyle(dimensions) {
+  const style = [];
+  if (Number.isFinite(dimensions.width)) style.push(`width:${Math.round(dimensions.width)}px`);
+  if (Number.isFinite(dimensions.height)) {
+    style.push(`height:${Math.round(dimensions.height)}px`);
+    style.push("object-fit:contain");
+  }
+  return style.join(";");
+}
+
+function isInlineDocumentImageSource(src) {
+  const value = String(src || "").trim();
+  if (/^data:image\//i.test(value)) return true;
+  if (/^https?:\/\//i.test(value)) return isSafeUrl(value);
+  return false;
+}
+
 function renderMarkdown(markdown) {
   const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
   const output = [];
@@ -925,14 +982,26 @@ function renderMarkdown(markdown) {
     paragraph = [];
   };
 
-  lines.forEach((line) => {
-    const image = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+  lines.forEach((line, index) => {
+    const image = parseMarkdownImageLine(line);
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (!line.trim()) {
       flushParagraph();
     } else if (image) {
       flushParagraph();
-      output.push(`<figure><img src="${escapeHtml(image[2])}" alt="${escapeHtml(image[1])}"><figcaption>${escapeHtml(image[1])}</figcaption></figure>`);
+      const inlineSrc = isInlineDocumentImageSource(image.src);
+      const imageSrc = inlineSrc ? image.src : "";
+      const handles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"]
+        .map((handle) => `<span class="image-resize-handle ${handle}" data-image-resize="${handle}" aria-hidden="true"></span>`)
+        .join("");
+      output.push(
+        `<figure class="document-image" data-image-line="${index}" data-image-source="${escapeAttribute(image.src)}">` +
+        `<img src="${escapeAttribute(imageSrc)}" data-image-path="${escapeAttribute(image.src)}" alt="${escapeAttribute(image.alt)}" style="${escapeAttribute(documentImageStyle(image.dimensions))}">` +
+        `<span class="image-missing" hidden>图片文件无法读取</span>` +
+        `<span class="image-resize-handles">${handles}</span>` +
+        (image.alt ? `<figcaption>${escapeHtml(image.alt)}</figcaption>` : "") +
+        `</figure>`
+      );
     } else if (heading) {
       flushParagraph();
       const level = heading[1].length;
@@ -943,6 +1012,61 @@ function renderMarkdown(markdown) {
   });
   flushParagraph();
   return output.join("") || "<p></p>";
+}
+
+function clearSelectedDocumentImage() {
+  selectedDocumentImageLine = null;
+  nodeDocumentPreview.querySelectorAll(".document-image.selected").forEach((item) => item.classList.remove("selected"));
+}
+
+function selectDocumentImage(figure) {
+  nodeDocumentPreview.querySelectorAll(".document-image.selected").forEach((item) => item.classList.remove("selected"));
+  figure.classList.add("selected");
+  selectedDocumentImageLine = Number(figure.dataset.imageLine);
+}
+
+async function resolveDocumentImageUrl(src) {
+  const value = String(src || "").trim();
+  if (!value) return "";
+  if (isInlineDocumentImageSource(value)) return value;
+  if (documentImageObjectUrls.has(value)) return documentImageObjectUrls.get(value);
+  if (!workspaceDirectoryHandle || !await hasWorkspacePermission("read")) return "";
+  const handle = await getWorkspaceFileHandleByPath(value);
+  if (!handle) return "";
+  const file = await handle.getFile();
+  const url = URL.createObjectURL(file);
+  documentImageObjectUrls.set(value, url);
+  return url;
+}
+
+async function hydrateMarkdownImages() {
+  const token = ++documentImagePreviewToken;
+  const images = [...nodeDocumentPreview.querySelectorAll("img[data-image-path]")];
+  await Promise.all(images.map(async (image) => {
+    const source = image.dataset.imagePath || "";
+    if (isInlineDocumentImageSource(source)) return;
+    const url = await resolveDocumentImageUrl(source);
+    if (token !== documentImagePreviewToken || !image.isConnected) return;
+    const figure = image.closest(".document-image");
+    if (url) {
+      image.src = url;
+      image.hidden = false;
+      figure?.querySelector(".image-missing")?.setAttribute("hidden", "");
+    } else {
+      image.removeAttribute("src");
+      image.hidden = true;
+      figure?.querySelector(".image-missing")?.removeAttribute("hidden");
+    }
+  }));
+}
+
+function renderDocumentPreview(markdown) {
+  nodeDocumentPreview.innerHTML = renderMarkdown(markdown);
+  if (Number.isFinite(selectedDocumentImageLine)) {
+    const selected = nodeDocumentPreview.querySelector(`.document-image[data-image-line="${selectedDocumentImageLine}"]`);
+    if (selected) selected.classList.add("selected");
+  }
+  hydrateMarkdownImages();
 }
 
 function markdownLinksFromHtml(html) {
@@ -988,7 +1112,7 @@ function syncActiveDocument({ markDirty = true } = {}) {
   const node = getNode(activeDocumentId);
   if (!node) return;
   node.document = nodeDocumentEditor.value;
-  nodeDocumentPreview.innerHTML = renderMarkdown(node.document);
+  renderDocumentPreview(node.document);
   if (markDirty) markSaving();
 }
 
@@ -1002,7 +1126,8 @@ function openNodeDocument(id) {
   if (typeof node.document !== "string") node.document = defaultNodeDocument(node);
   nodeDocumentTitle.textContent = node.text || "未命名主题";
   nodeDocumentEditor.value = node.document;
-  nodeDocumentPreview.innerHTML = renderMarkdown(node.document);
+  selectedDocumentImageLine = null;
+  renderDocumentPreview(node.document);
   nodeDocumentOverlay.hidden = false;
   render();
   nodeDocumentEditor.focus({ preventScroll: true });
@@ -1011,6 +1136,8 @@ function openNodeDocument(id) {
 function closeNodeDocument() {
   syncActiveDocument({ markDirty: false });
   activeDocumentId = null;
+  clearSelectedDocumentImage();
+  closeDocumentImageViewer();
   nodeDocumentOverlay.hidden = true;
   viewport.focus({ preventScroll: true });
 }
@@ -1035,6 +1162,92 @@ function insertDocumentLink(url) {
     return true;
   }
   return false;
+}
+
+function pastedImageFile(event) {
+  const files = [...(event.clipboardData?.files || [])];
+  const file = files.find((item) => item.type?.startsWith("image/"));
+  if (file) return file;
+  const items = [...(event.clipboardData?.items || [])];
+  const imageItem = items.find((item) => item.kind === "file" && item.type?.startsWith("image/"));
+  return imageItem?.getAsFile?.() || null;
+}
+
+function documentImageLine(lineIndex) {
+  const lines = nodeDocumentEditor.value.replace(/\r\n/g, "\n").split("\n");
+  const line = lines[lineIndex];
+  const image = parseMarkdownImageLine(line);
+  return image ? { lines, line, image } : null;
+}
+
+function updateDocumentImageLine(lineIndex, dimensions) {
+  const data = documentImageLine(lineIndex);
+  if (!data) return;
+  const selectionStart = nodeDocumentEditor.selectionStart;
+  const selectionEnd = nodeDocumentEditor.selectionEnd;
+  data.lines[lineIndex] = formatDocumentImageMarkdown(data.image.alt, data.image.src, dimensions);
+  nodeDocumentEditor.value = data.lines.join("\n");
+  nodeDocumentEditor.setSelectionRange(selectionStart, selectionEnd);
+  selectedDocumentImageLine = lineIndex;
+  syncActiveDocument();
+}
+
+function imageResizeDimensions(mode, startWidth, startHeight, dx, dy) {
+  let width = startWidth;
+  let height = startHeight;
+  if (mode.includes("e")) width = startWidth + dx;
+  if (mode.includes("w")) width = startWidth - dx;
+  if (mode.includes("s")) height = startHeight + dy;
+  if (mode.includes("n")) height = startHeight - dy;
+
+  const corner = mode.length === 2;
+  if (corner) {
+    const ratio = startWidth / Math.max(startHeight, 1);
+    if (Math.abs(width - startWidth) >= Math.abs(height - startHeight)) {
+      height = width / ratio;
+    } else {
+      width = height * ratio;
+    }
+  }
+
+  return {
+    width: Math.round(clamp(width, DOCUMENT_IMAGE_MIN_SIZE, DOCUMENT_IMAGE_MAX_SIZE)),
+    height: Math.round(clamp(height, DOCUMENT_IMAGE_MIN_SIZE, DOCUMENT_IMAGE_MAX_SIZE)),
+  };
+}
+
+function commitDocumentImageResize(state) {
+  const existing = documentImageLine(state.lineIndex)?.image.dimensions || {};
+  const dimensions = { ...existing };
+  if (state.mode === "e" || state.mode === "w") {
+    dimensions.width = state.current.width;
+  } else if (state.mode === "n" || state.mode === "s") {
+    dimensions.height = state.current.height;
+  } else {
+    dimensions.width = state.current.width;
+    dimensions.height = state.current.height;
+  }
+  updateDocumentImageLine(state.lineIndex, dimensions);
+}
+
+async function openDocumentImageViewerFromImage(image) {
+  const src = image?.dataset.imagePath || image?.getAttribute("src") || "";
+  const url = image?.currentSrc || await resolveDocumentImageUrl(src);
+  if (!url) {
+    showStatus("图片文件无法读取", 2200);
+    return;
+  }
+  documentImageViewerImg.src = url;
+  documentImageViewerImg.alt = image.alt || "";
+  documentImageViewer.hidden = false;
+  closeImageViewerButton.focus({ preventScroll: true });
+}
+
+function closeDocumentImageViewer() {
+  if (!documentImageViewer || documentImageViewer.hidden) return;
+  documentImageViewer.hidden = true;
+  documentImageViewerImg.removeAttribute("src");
+  if (!nodeDocumentOverlay.hidden) nodeDocumentEditor.focus({ preventScroll: true });
 }
 
 function removeTrailingSpaceBeforeCaret() {
@@ -1372,6 +1585,11 @@ async function ensureWorkspacePermission(mode = "read") {
   return (await workspaceDirectoryHandle.requestPermission(options)) === "granted";
 }
 
+async function hasWorkspacePermission(mode = "read") {
+  if (!workspaceDirectoryHandle) return false;
+  return (await workspaceDirectoryHandle.queryPermission({ mode })) === "granted";
+}
+
 function updateWorkspaceUi() {
   const savedName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_NAME_KEY) : "";
   const supported = Boolean(window.showDirectoryPicker && window.showOpenFilePicker && window.showSaveFilePicker);
@@ -1642,6 +1860,76 @@ async function getWorkspaceFileHandleByPath(path, { create = false } = {}) {
     directory = await directory.getDirectoryHandle(folder, { create });
   }
   return directory.getFileHandle(parts.at(-1), { create });
+}
+
+function imageExtensionForFile(file) {
+  const fromName = String(file?.name || "").match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase();
+  if (fromName && /^(png|jpe?g|gif|webp|bmp|svg)$/.test(fromName)) return fromName === "jpeg" ? "jpg" : fromName;
+  const fromType = String(file?.type || "").split("/").pop()?.toLowerCase();
+  if (fromType && /^(png|jpe?g|gif|webp|bmp|svg\+xml)$/.test(fromType)) return fromType === "jpeg" ? "jpg" : fromType.replace("+xml", "");
+  return "png";
+}
+
+function safeImageFileBaseName(value) {
+  return safeFileBaseName(String(value || "image").replace(/\.[^.]+$/, ""))
+    .replace(/[()[\]{}]/g, " ")
+    .replace(/\s+/g, "_")
+    .slice(0, 56) || "image";
+}
+
+async function workspaceFileExists(directoryHandle, fileName) {
+  try {
+    await directoryHandle.getFileHandle(fileName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function uniqueWorkspaceImageFileName(directoryHandle, baseName, extension) {
+  let fileName = `${baseName}.${extension}`;
+  let index = 2;
+  while (await workspaceFileExists(directoryHandle, fileName)) {
+    fileName = `${baseName}-${index}.${extension}`;
+    index += 1;
+  }
+  return fileName;
+}
+
+async function saveDocumentImageFile(file) {
+  if (!file?.type?.startsWith("image/")) throw new Error("NOT_IMAGE");
+  if (!workspaceDirectoryHandle) throw new Error("NO_WORKSPACE");
+  if (!await ensureWorkspacePermission("readwrite")) throw new Error("NO_WORKSPACE_PERMISSION");
+  const folderName = `${safeFileBaseName(rootTopicTitle() || "主题")}_pictures`;
+  const directory = await workspaceDirectoryHandle.getDirectoryHandle(folderName, { create: true });
+  const extension = imageExtensionForFile(file);
+  const baseName = safeImageFileBaseName(file.name || `image-${Date.now()}`);
+  const fileName = await uniqueWorkspaceImageFileName(directory, baseName, extension);
+  const handle = await directory.getFileHandle(fileName, { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(file);
+  await writable.close();
+  return `${folderName}/${fileName}`;
+}
+
+async function insertDocumentImageFile(file) {
+  try {
+    const src = await saveDocumentImageFile(file);
+    const alt = safeFileBaseName(file.name || "image");
+    insertAtDocumentCursor(`\n\n${formatDocumentImageMarkdown(alt, src, { width: 360 })}\n\n`);
+    showStatus("图片已保存到工作目录");
+  } catch (error) {
+    console.error(error);
+    if (error?.message === "NO_WORKSPACE") {
+      showStatus("请先选择工作目录后再插入图片", 2600);
+    } else if (error?.message === "NO_WORKSPACE_PERMISSION") {
+      showStatus("需要授权工作目录写入权限", 2600);
+    } else {
+      showStatus("无法保存图片", 2200);
+    }
+  } finally {
+    documentImageInput.value = "";
+  }
 }
 
 async function writeWorkspaceProjectFile(name, data) {
@@ -2963,6 +3251,12 @@ document.addEventListener("pointerdown", (event) => {
 
 nodeDocumentEditor.addEventListener("input", () => syncActiveDocument());
 nodeDocumentEditor.addEventListener("paste", (event) => {
+  const imageFile = pastedImageFile(event);
+  if (imageFile) {
+    event.preventDefault();
+    insertDocumentImageFile(imageFile);
+    return;
+  }
   const pasted = normalizePastedDocumentText(event);
   if (!pasted) return;
   if (/^https?:\/\/\S+$/i.test(pasted.trim()) && insertDocumentLink(pasted)) {
@@ -2971,6 +3265,69 @@ nodeDocumentEditor.addEventListener("paste", (event) => {
   }
   event.preventDefault();
   insertAtDocumentCursor(pasted);
+});
+nodeDocumentPreview.addEventListener("click", (event) => {
+  const figure = event.target.closest(".document-image");
+  if (!figure) {
+    clearSelectedDocumentImage();
+    return;
+  }
+  selectDocumentImage(figure);
+});
+nodeDocumentPreview.addEventListener("dblclick", (event) => {
+  const image = event.target.closest(".document-image img");
+  if (!image) return;
+  event.preventDefault();
+  openDocumentImageViewerFromImage(image);
+});
+nodeDocumentPreview.addEventListener("pointerdown", (event) => {
+  const handle = event.target.closest("[data-image-resize]");
+  if (!handle) return;
+  const figure = handle.closest(".document-image");
+  const image = figure?.querySelector("img");
+  if (!figure || !image || image.hidden) return;
+  event.preventDefault();
+  event.stopPropagation();
+  selectDocumentImage(figure);
+  const rect = image.getBoundingClientRect();
+  documentImageResize = {
+    pointerId: event.pointerId,
+    handle,
+    image,
+    lineIndex: Number(figure.dataset.imageLine),
+    mode: handle.dataset.imageResize,
+    startX: event.clientX,
+    startY: event.clientY,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    current: { width: rect.width, height: rect.height },
+  };
+  handle.setPointerCapture(event.pointerId);
+});
+document.addEventListener("pointermove", (event) => {
+  if (!documentImageResize || event.pointerId !== documentImageResize.pointerId) return;
+  event.preventDefault();
+  const next = imageResizeDimensions(
+    documentImageResize.mode,
+    documentImageResize.startWidth,
+    documentImageResize.startHeight,
+    event.clientX - documentImageResize.startX,
+    event.clientY - documentImageResize.startY
+  );
+  documentImageResize.current = next;
+  documentImageResize.image.style.width = `${next.width}px`;
+  documentImageResize.image.style.height = `${next.height}px`;
+  documentImageResize.image.style.objectFit = "contain";
+});
+document.addEventListener("pointerup", (event) => {
+  if (!documentImageResize || event.pointerId !== documentImageResize.pointerId) return;
+  event.preventDefault();
+  const state = documentImageResize;
+  documentImageResize = null;
+  try {
+    state.handle.releasePointerCapture(event.pointerId);
+  } catch {}
+  commitDocumentImageResize(state);
 });
 nodeDocumentEditor.addEventListener("click", (event) => {
   if (!event.ctrlKey && !event.metaKey) return;
@@ -2998,13 +3355,12 @@ insertImageButton.addEventListener("click", () => documentImageInput.click());
 documentImageInput.addEventListener("change", () => {
   const file = documentImageInput.files?.[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.addEventListener("load", () => {
-    insertAtDocumentCursor(`\n\n![${file.name}](${reader.result})\n\n`);
-    documentImageInput.value = "";
-  });
-  reader.readAsDataURL(file);
+  insertDocumentImageFile(file);
 });
+documentImageViewer.addEventListener("click", (event) => {
+  if (event.target === documentImageViewer) closeDocumentImageViewer();
+});
+closeImageViewerButton.addEventListener("click", closeDocumentImageViewer);
 
 viewport.addEventListener("wheel", (event) => {
   event.preventDefault();
@@ -3633,6 +3989,10 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !documentImageViewer.hidden) {
+    closeDocumentImageViewer();
+    return;
+  }
   if (event.key === "Escape" && !nodeDocumentOverlay.hidden) {
     closeNodeDocument();
     return;

@@ -192,8 +192,13 @@
           <input id="document-image-input" type="file" accept="image/*" hidden />
         </div>
       </section>
+
+      <section class="image-viewer-overlay" id="document-image-viewer" hidden aria-label="图片预览">
+        <button class="image-viewer-close" id="close-image-viewer" type="button" aria-label="关闭图片预览">×</button>
+        <img id="document-image-viewer-img" alt="" />
+      </section>
     </div>
 
-    <script src="./app.js?v=42"></script>
+    <script src="./app.js?v=43"></script>
   </body>
 </html>
