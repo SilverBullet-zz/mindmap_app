@@ -418,7 +418,7 @@ function updateMapReturnButton() {
 }
 
 function isLinkedNode(node) {
-  return Boolean(node?.mapLink?.name || node?.mapLink?.fileName);
+  return Boolean(node?.mapLink?.fileName || node?.mapLink?.name || node?.mapLink?.fingerprint || node?.mapLink?.localId);
 }
 
 function branchRootFor(node) {
@@ -770,7 +770,7 @@ function render() {
     element.setAttribute("role", "button");
     element.setAttribute("aria-label", node.text);
     element.setAttribute("aria-selected", isSelected ? "true" : "false");
-    if (linked) element.title = `Ctrl+点击打开：${node.mapLink.name || node.mapLink.fileName}`;
+    if (linked) element.title = `Ctrl+点击打开：${node.mapLink.title || node.mapLink.name || node.mapLink.fileName}`;
 
     const label = document.createElement("span");
     label.className = "topic-label";
@@ -1645,9 +1645,14 @@ function projectData() {
       width: Number.isFinite(Number(node.width)) ? Number(node.width) : undefined,
       document: typeof node.document === "string" ? node.document : undefined,
       images: nodeImages(node).length ? nodeImages(node) : undefined,
-      mapLink: node.mapLink?.fileName || node.mapLink?.name ? {
-        fileName: String(node.mapLink.fileName || node.mapLink.name || "").slice(0, 260),
-        name: String(node.mapLink.name || node.mapLink.fileName || "").slice(0, 260),
+      mapLink: isLinkedNode(node) ? {
+        kind: "workspace-map",
+        fileName: String(node.mapLink.fileName || node.mapLink.path || node.mapLink.name || "").slice(0, 260),
+        name: String(node.mapLink.name || node.mapLink.title || node.mapLink.fileName || "").slice(0, 260),
+        title: String(node.mapLink.title || node.mapLink.name || "").slice(0, 160),
+        fingerprint: String(node.mapLink.fingerprint || "").slice(0, 80),
+        localId: String(node.mapLink.localId || "").slice(0, 120),
+        linkedAt: String(node.mapLink.linkedAt || "").slice(0, 40),
       } : undefined,
     })),
   };
@@ -1981,7 +1986,7 @@ async function refreshWorkspaceFiles() {
           continue;
         }
         if (!isJsonFileName(name)) continue;
-        const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题", fingerprint: "" };
+        const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题", fingerprint: "", localId: "" };
         try {
           const file = await handle.getFile();
           const raw = JSON.parse(await file.text());
@@ -1991,6 +1996,7 @@ async function refreshWorkspaceFiles() {
           item.nodeCount = data.nodes.length;
           item.preview = data.nodes.find((node) => node.id === "root")?.text || "主题";
           item.fingerprint = projectFingerprint(raw);
+          item.localId = typeof raw.localId === "string" ? raw.localId : "";
         } catch {
           if (!isDedicatedMindmapFileName(name)) continue;
           item.title = name;
@@ -2039,11 +2045,22 @@ function workspaceFileByName(name) {
 }
 
 function workspaceFileByLink(link) {
-  const direct = workspaceFileByName(link?.fileName || link?.name);
+  if (!link) return null;
+  const direct = workspaceFileByName(link.fileName || link.path || "");
   if (direct) return direct;
-  const displayName = String(link?.name || "").trim();
+  const fingerprint = String(link.fingerprint || "").trim();
+  if (fingerprint) {
+    const matches = workspaceFiles.filter((file) => file.fingerprint === fingerprint);
+    if (matches.length === 1) return matches[0];
+  }
+  const localId = String(link.localId || "").trim();
+  if (localId) {
+    const matches = workspaceFiles.filter((file) => file.localId === localId);
+    if (matches.length === 1) return matches[0];
+  }
+  const displayName = String(link.title || link.name || "").trim();
   if (!displayName) return null;
-  const matches = workspaceFiles.filter((file) => workspaceEntryDisplayName(file) === displayName);
+  const matches = workspaceFiles.filter((file) => workspaceEntryDisplayName(file) === displayName || file.title === displayName);
   return matches.length === 1 ? matches[0] : null;
 }
 
@@ -2758,15 +2775,41 @@ async function openWorkspaceMapFile(name, { fromLinkNodeId = null, restore = fal
   }
 }
 
-function linkSelectedNodeToWorkspaceFile(name) {
+async function workspaceMapLinkForEntry(entry) {
+  const file = await entry.handle.getFile();
+  const raw = JSON.parse(await file.text());
+  const data = normalizeProject(raw);
+  return {
+    kind: "workspace-map",
+    fileName: entry.path,
+    name: workspaceEntryDisplayName(entry),
+    title: data.title || workspaceEntryDisplayName(entry),
+    fingerprint: projectFingerprint(raw),
+    localId: typeof raw.localId === "string" ? raw.localId : "",
+    linkedAt: new Date().toISOString(),
+  };
+}
+
+async function linkSelectedNodeToWorkspaceFile(name) {
   const node = getNode(selectedId);
   if (!node) return;
   const entry = workspaceFileByName(name);
-  const displayName = workspaceEntryDisplayName(entry) || name;
+  if (!entry) {
+    showStatus("找不到可链接的 map 文件", 2200);
+    return;
+  }
+  let link;
+  try {
+    link = await workspaceMapLinkForEntry(entry);
+  } catch (error) {
+    console.error(error);
+    showStatus("无法读取链接目标", 2200);
+    return;
+  }
   pushHistory();
-  node.mapLink = { fileName: name, name: displayName };
+  node.mapLink = link;
   render();
-  showStatus(`已将“${node.text || "主题"}”链接到 ${displayName}`, 2200);
+  showStatus(`已将“${node.text || "主题"}”链接到 ${link.name}`, 2200);
 }
 
 function ensureNodeLinkMenu() {
@@ -2815,7 +2858,7 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
 
   if (isLinkedNode(node)) {
     const linkedEntry = workspaceFileByLink(node.mapLink);
-    const linkedDisplayName = workspaceEntryDisplayName(linkedEntry) || node.mapLink.name || node.mapLink.fileName;
+    const linkedDisplayName = workspaceEntryDisplayName(linkedEntry) || node.mapLink.title || node.mapLink.name || node.mapLink.fileName;
     const current = document.createElement("button");
     current.type = "button";
     current.className = "node-link-menu-item";
@@ -2923,13 +2966,11 @@ async function followNodeMapLink(id) {
   if (!isLinkedNode(node)) return false;
   if (!workspaceFiles.length && workspaceDirectoryHandle) await refreshWorkspaceFiles();
   const entry = workspaceFileByLink(node.mapLink);
-  const name = entry?.path || node.mapLink.fileName || node.mapLink.name;
-  const opened = await openWorkspaceMapFile(name, { fromLinkNodeId: id });
-  if (opened && entry && node.mapLink.fileName !== entry.path) {
-    node.mapLink = { fileName: entry.path, name: workspaceEntryDisplayName(entry) };
-    markSaving();
+  if (!entry) {
+    showStatus("链接目标未找到或不唯一", 2600);
+    return false;
   }
-  return opened;
+  return openWorkspaceMapFile(entry.path, { fromLinkNodeId: id });
 }
 
 async function openProjectFromPicker() {
@@ -3081,8 +3122,13 @@ function normalizeProject(data) {
       document: typeof node.document === "string" ? node.document.slice(0, 200000) : undefined,
       images: normalizeNodeImages(node.images),
       mapLink: node.mapLink && typeof node.mapLink === "object" ? {
-        fileName: String(node.mapLink.fileName || node.mapLink.name || "").slice(0, 260),
-        name: String(node.mapLink.name || node.mapLink.fileName || "").slice(0, 260),
+        kind: String(node.mapLink.kind || "workspace-map").slice(0, 40),
+        fileName: String(node.mapLink.fileName || node.mapLink.path || node.mapLink.name || "").slice(0, 260),
+        name: String(node.mapLink.name || node.mapLink.title || node.mapLink.fileName || "").slice(0, 260),
+        title: String(node.mapLink.title || node.mapLink.name || "").slice(0, 160),
+        fingerprint: String(node.mapLink.fingerprint || "").slice(0, 80),
+        localId: String(node.mapLink.localId || "").slice(0, 120),
+        linkedAt: String(node.mapLink.linkedAt || "").slice(0, 40),
       } : undefined,
       x: 0,
       y: 0,
@@ -4416,7 +4462,7 @@ document.addEventListener("click", async (event) => {
   const nodeId = item.dataset.nodeId;
   if (item.dataset.action === "link-file") {
     setSelection([nodeId], nodeId);
-    linkSelectedNodeToWorkspaceFile(item.dataset.name);
+    await linkSelectedNodeToWorkspaceFile(item.dataset.name);
     hideNodeLinkMenu();
   } else if (item.dataset.action === "insert-node-image") {
     setSelection([nodeId], nodeId);
