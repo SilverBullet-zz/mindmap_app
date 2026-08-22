@@ -19,6 +19,8 @@ const BUTTON_ZOOM_STEP = 0.1;
 const WHEEL_ZOOM_STEP = 0.08;
 const KEYBOARD_ZOOM_STEP = 0.04;
 const DEFAULT_DOCUMENT_TITLE = "未命名思维导图";
+const ROOT_TOPIC_TEXT = "主题";
+const NEW_TOPIC_TEXT = "新主题";
 const DOCUMENT_IMAGE_MIN_SIZE = 56;
 const DOCUMENT_IMAGE_MAX_SIZE = 1200;
 const NODE_WIDTH_RULES = {
@@ -29,11 +31,11 @@ const sizingContext = document.createElement("canvas").getContext("2d");
 
 function createDefaultNodes() {
   return [
-  { id: "root", parentId: null, text: "主题", side: 0, color: "#f7fff9", collapsed: false, width: NODE_WIDTH_RULES.root.seed, x: 0, y: 0 },
-  { id: "n1", parentId: "root", text: "分支", side: 1, color: palette[0], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
-  { id: "n2", parentId: "root", text: "分支", side: 1, color: palette[1], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
-  { id: "n3", parentId: "root", text: "分支", side: -1, color: palette[2], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
-  { id: "n4", parentId: "root", text: "分支", side: -1, color: palette[3], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
+  { id: "root", parentId: null, text: ROOT_TOPIC_TEXT, side: 0, color: "#f7fff9", collapsed: false, width: NODE_WIDTH_RULES.root.seed, x: 0, y: 0 },
+  { id: "n1", parentId: "root", text: NEW_TOPIC_TEXT, side: 1, color: palette[0], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
+  { id: "n2", parentId: "root", text: NEW_TOPIC_TEXT, side: 1, color: palette[1], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
+  { id: "n3", parentId: "root", text: NEW_TOPIC_TEXT, side: -1, color: palette[2], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
+  { id: "n4", parentId: "root", text: NEW_TOPIC_TEXT, side: -1, color: palette[3], collapsed: false, width: NODE_WIDTH_RULES.branch.seed, x: 0, y: 0 },
   ];
 }
 
@@ -43,6 +45,10 @@ function createLocalId() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function defaultTopicText(node) {
+  return node?.id === "root" || node?.parentId === null ? ROOT_TOPIC_TEXT : NEW_TOPIC_TEXT;
 }
 
 function nodeWidthLimits(node) {
@@ -55,7 +61,7 @@ function estimateNodeTextWidth(node, measureText) {
   const context = measureText || sizingContext;
   const limits = nodeWidthLimits(node);
   const font = `${limits.fontWeight} ${limits.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
-  const lines = String(node.text || (node.id === "root" ? "主题" : "分支"))
+  const lines = String(node.text || defaultTopicText(node))
     .replace(/\r\n/g, "\n")
     .split("\n");
   return Math.max(
@@ -354,12 +360,12 @@ function currentMapTitle() {
 }
 
 function rootTopicTitle() {
-  return getNode("root")?.text?.trim() || "主题";
+  return getNode("root")?.text?.trim() || ROOT_TOPIC_TEXT;
 }
 
 function shouldUseRootTitle(value = documentTitleInput.value) {
   const title = String(value || "").trim();
-  return !title || title === DEFAULT_DOCUMENT_TITLE || title === "主题";
+  return !title || title === DEFAULT_DOCUMENT_TITLE || title === ROOT_TOPIC_TEXT;
 }
 
 function syncDocumentTitleFromRoot({ force = false } = {}) {
@@ -526,7 +532,7 @@ function searchMaps() {
       const data = normalizeProject(JSON.parse(raw));
       maps.push({
         id: item.id,
-        title: data.title || item.title || "未命名思维导图",
+        title: data.title || item.title || DEFAULT_DOCUMENT_TITLE,
         nodes: data.nodes,
         current: false,
       });
@@ -588,7 +594,7 @@ function renderSearchResults() {
     item.dataset.key = result.key;
 
     const topic = document.createElement("strong");
-    topic.textContent = result.nodeText || "未命名主题";
+    topic.textContent = result.nodeText || NEW_TOPIC_TEXT;
     const map = document.createElement("span");
     map.textContent = result.mapTitle;
     const detail = document.createElement("small");
@@ -648,7 +654,7 @@ function layoutMap() {
   const estimateLineCount = (node, maxTextWidth) => {
     const limits = nodeWidthLimits(node);
     const font = `${limits.fontWeight} ${limits.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
-    return String(node.text || "未命名主题")
+    return String(node.text || NEW_TOPIC_TEXT)
       .replace(/\r\n/g, "\n")
       .split("\n")
       .reduce((total, paragraph) => {
@@ -935,7 +941,7 @@ function syncEditingText() {
   if (!editingId) return;
   const node = getNode(editingId);
   const label = nodesLayer.querySelector(`[data-id="${editingId}"] .topic-label`);
-  if (node && label) node.text = editableText(label) || "未命名主题";
+  if (node && label) node.text = editableText(label) || defaultTopicText(node);
 }
 
 function editableText(label) {
@@ -988,7 +994,7 @@ function renderInlineMarkdown(value) {
 }
 
 function defaultNodeDocument(node) {
-  return `# ${node?.text || "未命名主题"}\n\n`;
+  return `# ${node?.text || defaultTopicText(node)}\n\n`;
 }
 
 function parseMarkdownImageLine(line) {
@@ -1211,7 +1217,7 @@ function openNodeDocument(id) {
   selectedId = id;
   selectedIds = new Set([id]);
   if (typeof node.document !== "string") node.document = defaultNodeDocument(node);
-  nodeDocumentTitle.textContent = node.text || "未命名主题";
+  nodeDocumentTitle.textContent = node.text || defaultTopicText(node);
   nodeDocumentEditor.value = node.document;
   selectedDocumentImageLine = null;
   renderDocumentPreview(node.document);
@@ -1435,7 +1441,7 @@ function addChild(parentId = selectedId, startEditing = true) {
   nodes.push({
     id,
     parentId,
-    text: "分支",
+    text: NEW_TOPIC_TEXT,
     side,
     color: parent.id === "root" ? palette[(siblings.length + (side === -1 ? 2 : 0)) % palette.length] : parent.color,
     collapsed: false,
@@ -1986,7 +1992,7 @@ async function refreshWorkspaceFiles() {
           continue;
         }
         if (!isJsonFileName(name)) continue;
-        const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: "主题", fingerprint: "", localId: "" };
+        const item = { kind: "file", name, path, id: path, handle, title: name, updatedAt: "", nodeCount: 0, preview: ROOT_TOPIC_TEXT, fingerprint: "", localId: "" };
         try {
           const file = await handle.getFile();
           const raw = JSON.parse(await file.text());
@@ -1994,7 +2000,7 @@ async function refreshWorkspaceFiles() {
           item.title = data.title || data.nodes.find((node) => node.id === "root")?.text || name;
           item.updatedAt = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
           item.nodeCount = data.nodes.length;
-          item.preview = data.nodes.find((node) => node.id === "root")?.text || "主题";
+          item.preview = data.nodes.find((node) => node.id === "root")?.text || ROOT_TOPIC_TEXT;
           item.fingerprint = projectFingerprint(raw);
           item.localId = typeof raw.localId === "string" ? raw.localId : "";
         } catch {
@@ -2065,7 +2071,7 @@ function workspaceFileByLink(link) {
 }
 
 function workspaceEntryDisplayName(entry) {
-  return entry?.title || entry?.preview || entry?.name || "未命名思维导图";
+  return entry?.title || entry?.preview || entry?.name || DEFAULT_DOCUMENT_TITLE;
 }
 
 function hasLinkableWorkspaceFile(entry) {
@@ -2095,12 +2101,12 @@ async function scanWorkspaceTrash() {
         name,
         path: `${WORKSPACE_TRASH_DIR}/${name}`,
         handle,
-        title: raw.title || data.title || "未命名思维导图",
+        title: raw.title || data.title || DEFAULT_DOCUMENT_TITLE,
         deletedAt: raw.deletedAt || (file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString()),
         originalPath: raw.originalPath || raw.originalName || "",
         updatedAt: raw.updatedAt || raw.data?.savedAt || "",
         nodeCount: data.nodes.length,
-        preview: data.nodes.find((node) => node.id === "root")?.text || "主题",
+        preview: data.nodes.find((node) => node.id === "root")?.text || ROOT_TOPIC_TEXT,
         data: raw.data,
       });
     } catch {
@@ -2120,7 +2126,7 @@ function safeFileBaseName(value) {
 }
 
 function defaultFileBaseName() {
-  return safeFileBaseName(rootTopicTitle() || "主题");
+  return safeFileBaseName(rootTopicTitle() || ROOT_TOPIC_TEXT);
 }
 
 async function uniqueWorkspaceFileName(baseName) {
@@ -2261,7 +2267,7 @@ async function saveDocumentImageFile(file) {
   if (!file?.type?.startsWith("image/")) throw new Error("NOT_IMAGE");
   if (!workspaceDirectoryHandle) throw new Error("NO_WORKSPACE");
   if (!await ensureWorkspacePermission("readwrite")) throw new Error("NO_WORKSPACE_PERMISSION");
-  const folderName = `${safeFileBaseName(rootTopicTitle() || "主题")}_pictures`;
+  const folderName = `${safeFileBaseName(rootTopicTitle() || ROOT_TOPIC_TEXT)}_pictures`;
   const directory = await workspaceDirectoryHandle.getDirectoryHandle(folderName, { create: true });
   const extension = imageExtensionForFile(file);
   const baseName = safeImageFileBaseName(file.name || `image-${Date.now()}`);
@@ -2315,7 +2321,7 @@ async function attachImageToNode(file, nodeId = selectedId, { fromPaste = false 
       nodeImagePastePendingIds.add(node.id);
       showStatus("图片已保存，按 Enter 完成后生成链接", 2600);
     } else {
-      showStatus(`图片已添加到“${node.text || "主题"}”`);
+      showStatus(`图片已添加到“${node.text || defaultTopicText(node)}”`);
     }
     return true;
   } catch (error) {
@@ -2454,7 +2460,7 @@ async function writeWorkspaceTrashBackup(name, raw, reason = "overwrite") {
     deletedAt: new Date().toISOString(),
     originalPath: name,
     originalName: String(name || "").split("/").filter(Boolean).at(-1) || name,
-    title: data.title || raw.title || "未命名思维导图",
+    title: data.title || raw.title || DEFAULT_DOCUMENT_TITLE,
     updatedAt: raw.savedAt || "",
     reason,
     data: raw,
@@ -2809,7 +2815,7 @@ async function linkSelectedNodeToWorkspaceFile(name) {
   pushHistory();
   node.mapLink = link;
   render();
-  showStatus(`已将“${node.text || "主题"}”链接到 ${link.name}`, 2200);
+  showStatus(`已将“${node.text || defaultTopicText(node)}”链接到 ${link.name}`, 2200);
 }
 
 function ensureNodeLinkMenu() {
@@ -2833,7 +2839,7 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
 
   const title = document.createElement("div");
   title.className = "node-link-menu-title";
-  title.textContent = `“${node.text || "主题"}”`;
+  title.textContent = `“${node.text || defaultTopicText(node)}”`;
   menu.append(title);
 
   const insertImage = document.createElement("button");
@@ -3052,10 +3058,10 @@ function updateLocalIndexEntry(data, id = currentLocalId) {
   const index = readActiveLocalIndex().filter((item) => item.id !== id);
   index.unshift({
     id,
-    title: data.title || "未命名思维导图",
+    title: data.title || DEFAULT_DOCUMENT_TITLE,
     updatedAt: data.savedAt,
     nodeCount: data.nodes.length,
-    preview: data.nodes.find((node) => node.id === "root")?.text || "主题",
+    preview: data.nodes.find((node) => node.id === "root")?.text || ROOT_TOPIC_TEXT,
   });
   writeLocalIndex(index.slice(0, 80));
 }
@@ -3114,7 +3120,7 @@ function normalizeProject(data) {
     return {
       id: node.id,
       parentId: node.parentId === null ? null : String(node.parentId),
-      text: String(node.text || "未命名主题").slice(0, 500),
+      text: String(node.text || defaultTopicText(node)).slice(0, 500),
       side: node.side === -1 ? -1 : node.side === 0 ? 0 : 1,
       color: /^#[0-9a-f]{6}$/i.test(node.color) ? node.color : "#ffffff",
       collapsed: Boolean(node.collapsed),
@@ -3158,7 +3164,7 @@ function normalizeProject(data) {
   const viewPanX = Number(data.view?.pan?.x);
   const viewPanY = Number(data.view?.pan?.y);
   return {
-    title: typeof data.title === "string" ? data.title.slice(0, 120) : "未命名思维导图",
+    title: typeof data.title === "string" ? data.title.slice(0, 120) : DEFAULT_DOCUMENT_TITLE,
     nodes: normalizedNodes,
     view: {
       zoom: Number.isFinite(viewZoom) ? Math.min(1.6, Math.max(0.5, viewZoom)) : 1,
@@ -3291,13 +3297,13 @@ function renderHomeList() {
     if (item.path) card.dataset.name = item.path;
 
     const title = document.createElement("strong");
-    title.textContent = item.title || "未命名思维导图";
+    title.textContent = item.title || DEFAULT_DOCUMENT_TITLE;
     const meta = document.createElement("span");
     meta.textContent = isTrash
       ? `${item.nodeCount || 0} 个主题 · 删除于 ${formatLocalTime(item.deletedAt)} · 原位置：${item.originalPath || "未知"}`
       : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${workspacePathDirectory(item.path) || "工作目录"}`;
     const preview = document.createElement("small");
-    preview.textContent = item.preview || "主题";
+    preview.textContent = item.preview || ROOT_TOPIC_TEXT;
 
     const actions = document.createElement("div");
     actions.className = "home-card-actions";
@@ -3459,7 +3465,7 @@ function flattenComparableProject(data) {
   const result = new Map();
   const ordered = [];
   const visit = (node, key, pathParts) => {
-    const path = [...pathParts, shortText(node.text, node.id === "root" ? "主题" : "未命名主题")];
+    const path = [...pathParts, shortText(node.text, defaultTopicText(node))];
     const item = {
       key,
       node,
@@ -3690,7 +3696,7 @@ function resetToUnsavedDefaultMap(status = "已移到垃圾桶") {
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
   applyProjectData({
-    title: "主题",
+    title: ROOT_TOPIC_TEXT,
     nodes: createDefaultNodes(),
     view: { zoom: 1, pan: { x: 0, y: 0 } },
   }, { localId: createLocalId(), status, markDirty: false });
@@ -3740,7 +3746,7 @@ function deleteLocalMap(id) {
     return;
   }
   const item = readActiveLocalIndex({ repair: true }).find((entry) => entry.id === id);
-  const title = item?.title || "未命名思维导图";
+  const title = item?.title || DEFAULT_DOCUMENT_TITLE;
   const confirmed = window.confirm(`确认删除“${title}”吗？\n\n它会被移入垃圾桶，你可以在“垃圾桶”中恢复。`);
   if (!confirmed) return;
 
@@ -3757,7 +3763,7 @@ function deleteLocalMap(id) {
     deletedAt: new Date().toISOString(),
     updatedAt: item?.updatedAt,
     nodeCount: item?.nodeCount || data?.nodes?.length || 0,
-    preview: item?.preview || data?.nodes?.find((node) => node.id === "root")?.text || "主题",
+    preview: item?.preview || data?.nodes?.find((node) => node.id === "root")?.text || ROOT_TOPIC_TEXT,
     data,
   });
   writeLocalTrash(trash);
@@ -3770,7 +3776,7 @@ function deleteLocalMap(id) {
       openLocalMap(nextMap.id, { keepHomeOpen: true });
     } else {
       applyProjectData({
-        title: "未命名思维导图",
+        title: DEFAULT_DOCUMENT_TITLE,
         nodes: createDefaultNodes(),
         view: { zoom: 1, pan: { x: 0, y: 0 } },
       }, {
@@ -3895,7 +3901,7 @@ function newLocalMap({ keepHomeOpen = false } = {}) {
   workspaceConflictFileName = null;
   hideWorkspaceConflictDialog();
   applyProjectData({
-    title: "主题",
+    title: ROOT_TOPIC_TEXT,
     nodes: createDefaultNodes(),
     view: { zoom: 1, pan: { x: 0, y: 0 } },
   }, { localId: createLocalId(), status: "已新建工作目录思维导图", markDirty: true });
@@ -4211,7 +4217,8 @@ nodesLayer.addEventListener("pointermove", (event) => {
   nodeDrag.insertPosition = intent?.position || null;
   if (intent?.mode === "child") {
     targetElement.classList.add("drop-target", intent.direction === "left" ? "drop-child-left" : "drop-child-right");
-    hintText.textContent = `放到“${getNode(intent.targetId)?.text || "主题"}”下`;
+    const targetNode = getNode(intent.targetId);
+    hintText.textContent = `放到“${targetNode?.text || defaultTopicText(targetNode)}”下`;
   } else if (intent?.mode === "sibling") {
     targetElement.classList.add(intent.position === "before" ? "drop-before" : "drop-after");
     hintText.textContent = intent.position === "before" ? "插入到此主题上方" : "插入到此主题下方";
@@ -5095,7 +5102,7 @@ function roundedRect(context, x, y, width, height, radius) {
 }
 
 function wrapCanvasText(context, text, maxWidth) {
-  const value = String(text || "未命名主题").trim();
+  const value = String(text || NEW_TOPIC_TEXT).trim();
   const tokens = value.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+|\s+/gu) || [value];
   const lines = [];
   let line = "";
