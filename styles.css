@@ -2729,10 +2729,11 @@ textarea:focus-visible {
 
 @media (max-width: 720px) {
   .topbar {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto minmax(0, 1fr);
     height: auto;
     min-height: calc(56px + var(--safe-top));
-    padding: var(--safe-top) calc(10px + var(--safe-right)) 0 calc(10px + var(--safe-left));
+    gap: 8px;
+    padding: var(--safe-top) calc(10px + var(--safe-right)) 8px calc(10px + var(--safe-left));
   }
 
   .search-box {
@@ -2745,10 +2746,36 @@ textarea:focus-visible {
   .brand > span:last-child,
   .save-state,
   .toolbar-divider,
-  .icon-button:not(.file-button),
-  .primary-button,
-  #home-button {
+  .icon-button:not(.file-button) {
     display: none;
+  }
+
+  .top-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: flex-start;
+    gap: 6px;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .top-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .top-actions > * {
+    flex: 0 0 auto;
+  }
+
+  .top-actions .secondary-button,
+  .top-actions .command-button,
+  .top-actions .primary-button {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 
   .open-local-button {
@@ -2765,10 +2792,6 @@ textarea:focus-visible {
 
   .command-button > span:not(.folder-icon):not(.save-icon) {
     display: none;
-  }
-
-  .top-actions {
-    gap: 2px;
   }
 
   .document-title input {

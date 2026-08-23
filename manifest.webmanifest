@@ -1,0 +1,19 @@
+{
+  "name": "枝图 - 思维导图",
+  "short_name": "枝图",
+  "description": "A fresh, device-friendly mindmap editor.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eefbf3",
+  "theme_color": "#eefbf3",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
