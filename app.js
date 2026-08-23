@@ -194,6 +194,7 @@ const workspaceResizer = document.querySelector("#workspace-resizer");
 const workspaceFolderName = document.querySelector("#workspace-folder-name");
 const workspaceFolderStatus = document.querySelector("#workspace-folder-status");
 const workspaceModeLabel = document.querySelector("#workspace-mode-label");
+const workspaceCapabilities = document.querySelector("#workspace-capabilities");
 const chooseWorkspaceFolderButton = document.querySelector("#choose-workspace-folder");
 const openWorkspaceFileButton = document.querySelector("#open-workspace-file");
 const refreshWorkspaceFilesButton = document.querySelector("#refresh-workspace-files");
@@ -1816,11 +1817,47 @@ function supportsSystemSavePicker() {
   return Boolean(window.showSaveFilePicker);
 }
 
+function setWorkspaceCapability(label, value, tone = "ok") {
+  const item = document.createElement("span");
+  item.className = `workspace-capability ${tone}`;
+  const labelElement = document.createElement("b");
+  labelElement.textContent = label;
+  const valueElement = document.createElement("span");
+  valueElement.textContent = value;
+  item.append(labelElement, valueElement);
+  return item;
+}
+
+function updateWorkspaceCapabilities() {
+  if (!workspaceCapabilities) return;
+  const folderSupported = supportsWorkspaceDirectoryAccess();
+  const localSupported = localStorageAvailable();
+  const pickerSupported = supportsSystemOpenPicker() || supportsSystemSavePicker();
+  workspaceCapabilities.replaceChildren(
+    setWorkspaceCapability(
+      "文件夹",
+      workspaceDirectoryHandle ? "已连接" : folderSupported ? "可授权" : "不可用",
+      workspaceDirectoryHandle ? "ok" : folderSupported ? "warn" : "off"
+    ),
+    setWorkspaceCapability(
+      "本地备份",
+      localSupported ? "可用" : "不可用",
+      localSupported ? "ok" : "off"
+    ),
+    setWorkspaceCapability(
+      "导入导出",
+      pickerSupported ? "系统窗口" : "下载模式",
+      pickerSupported ? "ok" : "warn"
+    )
+  );
+}
+
 function updateWorkspaceUi() {
   const savedName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_NAME_KEY) : "";
   const supported = supportsWorkspaceDirectoryAccess();
   workspaceFolderName.textContent = workspaceDirectoryHandle?.name || savedName || (supported ? "未选择文件夹" : "浏览器本地");
   updateWorkspaceStatusText({ supported });
+  updateWorkspaceCapabilities();
   const collapsed = localStorageAvailable() && localStorage.getItem(WORKSPACE_COLLAPSED_KEY) === "true";
   workspaceSidebar.classList.toggle("collapsed", collapsed);
   workspaceSidebar.classList.toggle("connected", Boolean(workspaceDirectoryHandle));
