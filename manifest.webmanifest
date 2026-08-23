@@ -1,13 +1,32 @@
 {
+  "id": "./index.html",
   "name": "枝图 - 思维导图",
   "short_name": "枝图",
   "description": "A fresh, device-friendly mindmap editor.",
+  "lang": "zh-CN",
+  "dir": "ltr",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui", "browser"],
   "background_color": "#eefbf3",
   "theme_color": "#eefbf3",
   "orientation": "any",
+  "categories": ["productivity", "education", "utilities"],
+  "shortcuts": [
+    {
+      "name": "新建思维导图",
+      "short_name": "新建",
+      "url": "./index.html?action=new",
+      "description": "Open Zhitu and start a new mindmap."
+    },
+    {
+      "name": "打开工作目录",
+      "short_name": "工作目录",
+      "url": "./index.html?action=workspace",
+      "description": "Open Zhitu with the workspace panel available."
+    }
+  ],
   "icons": [
     {
       "src": "./icons/icon.svg",

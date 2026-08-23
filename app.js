@@ -5605,10 +5605,23 @@ window.setInterval(() => {
   if (autosaveDirty) autosaveLocal();
 }, AUTOSAVE_INTERVAL);
 
+function consumeLaunchAction() {
+  const params = new URLSearchParams(window.location.search);
+  const action = params.get("action");
+  if (!action) return;
+  window.history.replaceState({}, "", window.location.pathname || "./");
+  if (action === "new") {
+    newLocalMap();
+  } else if (action === "workspace") {
+    openWorkspacePanel();
+  }
+}
+
 async function bootstrapApp() {
   await initializeWorkspaceDirectory();
   renderHomeList();
   render();
+  consumeLaunchAction();
   viewport.focus();
 }
 
