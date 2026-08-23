@@ -39,6 +39,14 @@ function createDefaultNodes() {
   ];
 }
 
+function createDefaultProjectData() {
+  return {
+    title: ROOT_TOPIC_TEXT,
+    nodes: createDefaultNodes(),
+    view: { zoom: 1, pan: { x: 0, y: 0 } },
+  };
+}
+
 function createLocalId() {
   return window.crypto?.randomUUID?.() || `map-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -363,9 +371,34 @@ function rootTopicTitle() {
   return getNode("root")?.text?.trim() || ROOT_TOPIC_TEXT;
 }
 
+function rootTitleFromNodes(projectNodes = nodes) {
+  return projectNodes.find((node) => node.id === "root" || node.parentId === null)?.text?.trim() || ROOT_TOPIC_TEXT;
+}
+
+function isDefaultBlankProject(data) {
+  const projectNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+  if (projectNodes.length !== 5) return false;
+  const root = projectNodes.find((node) => node.id === "root" || node.parentId === null);
+  if (!root || String(root.text || "").trim() !== ROOT_TOPIC_TEXT) return false;
+  return projectNodes.every((node) => {
+    const expectedText = node === root ? ROOT_TOPIC_TEXT : NEW_TOPIC_TEXT;
+    return String(node.text || "").trim() === expectedText &&
+      typeof node.document !== "string" &&
+      !node.mapLink &&
+      (!Array.isArray(node.images) || node.images.length === 0);
+  });
+}
+
 function shouldUseRootTitle(value = documentTitleInput.value) {
   const title = String(value || "").trim();
   return !title || title === DEFAULT_DOCUMENT_TITLE || title === ROOT_TOPIC_TEXT;
+}
+
+function projectDisplayTitle(data) {
+  const title = String(data?.title || "").trim();
+  const rootTitle = rootTitleFromNodes(data?.nodes || []);
+  if (isDefaultBlankProject(data)) return rootTitle;
+  return shouldUseRootTitle(title) ? rootTitle : title;
 }
 
 function syncDocumentTitleFromRoot({ force = false } = {}) {
@@ -532,7 +565,7 @@ function searchMaps() {
       const data = normalizeProject(JSON.parse(raw));
       maps.push({
         id: item.id,
-        title: data.title || item.title || DEFAULT_DOCUMENT_TITLE,
+        title: projectDisplayTitle(data) || item.title || DEFAULT_DOCUMENT_TITLE,
         nodes: data.nodes,
         current: false,
       });
@@ -2024,7 +2057,7 @@ async function refreshWorkspaceFiles() {
           const file = await handle.getFile();
           const raw = JSON.parse(await file.text());
           const data = normalizeProject(raw);
-          item.title = data.title || data.nodes.find((node) => node.id === "root")?.text || name;
+          item.title = projectDisplayTitle(data) || name;
           item.updatedAt = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
           item.nodeCount = data.nodes.length;
           item.preview = data.nodes.find((node) => node.id === "root")?.text || ROOT_TOPIC_TEXT;
@@ -2174,7 +2207,7 @@ async function scanWorkspaceTrash() {
         name,
         path: `${WORKSPACE_TRASH_DIR}/${name}`,
         handle,
-        title: raw.title || data.title || DEFAULT_DOCUMENT_TITLE,
+        title: projectDisplayTitle(data) || raw.title || DEFAULT_DOCUMENT_TITLE,
         deletedAt: raw.deletedAt || (file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString()),
         originalPath: raw.originalPath || raw.originalName || "",
         updatedAt: raw.updatedAt || raw.data?.savedAt || "",
@@ -2520,10 +2553,11 @@ async function workspaceWriteRisk(handle, name, nextData) {
 async function writeWorkspaceTrashBackup(name, raw, reason = "overwrite") {
   if (!workspaceDirectoryHandle || !raw) return null;
   const data = normalizeProject(raw);
+  const displayTitle = projectDisplayTitle(data) || name;
   const trashDirectory = await workspaceDirectoryHandle.getDirectoryHandle(WORKSPACE_TRASH_DIR, { create: true });
   const trashName = await uniqueDirectoryFileName(
     trashDirectory,
-    `${Date.now()} ${safeFileBaseName(data.title || name)} ${reason === "overwrite" ? "覆盖前备份" : "备份"}`,
+    `${Date.now()} ${safeFileBaseName(displayTitle)} ${reason === "overwrite" ? "覆盖前备份" : "备份"}`,
     ".mindmap-trash.json"
   );
   const trashHandle = await trashDirectory.getFileHandle(trashName, { create: true });
@@ -2533,7 +2567,7 @@ async function writeWorkspaceTrashBackup(name, raw, reason = "overwrite") {
     deletedAt: new Date().toISOString(),
     originalPath: name,
     originalName: String(name || "").split("/").filter(Boolean).at(-1) || name,
-    title: data.title || raw.title || DEFAULT_DOCUMENT_TITLE,
+    title: displayTitle || raw.title || DEFAULT_DOCUMENT_TITLE,
     updatedAt: raw.savedAt || "",
     reason,
     data: raw,
@@ -2862,7 +2896,7 @@ async function workspaceMapLinkForEntry(entry) {
     kind: "workspace-map",
     fileName: entry.path,
     name: workspaceEntryDisplayName(entry),
-    title: data.title || workspaceEntryDisplayName(entry),
+    title: projectDisplayTitle(data) || workspaceEntryDisplayName(entry),
     fingerprint: projectFingerprint(raw),
     localId: typeof raw.localId === "string" ? raw.localId : "",
     linkedAt: new Date().toISOString(),
@@ -3145,7 +3179,7 @@ function updateLocalIndexEntry(data, id = currentLocalId) {
   const index = readActiveLocalIndex().filter((item) => item.id !== id);
   index.unshift({
     id,
-    title: data.title || DEFAULT_DOCUMENT_TITLE,
+    title: projectDisplayTitle(data) || DEFAULT_DOCUMENT_TITLE,
     updatedAt: data.savedAt,
     nodeCount: data.nodes.length,
     preview: data.nodes.find((node) => node.id === "root")?.text || ROOT_TOPIC_TEXT,
@@ -3291,9 +3325,10 @@ function applyProjectData(
   zoom = view?.zoom ?? data.view.zoom;
   pan = view?.pan ?? data.view.pan;
   currentLocalId = localId;
-  documentTitleInput.value = data.title || rootTopicTitle();
-  titleEditedByUser = !shouldUseRootTitle(data.title) && String(data.title || "").trim() !== rootTopicTitle();
-  syncDocumentTitleFromRoot({ force: shouldUseRootTitle(data.title) || String(data.title || "").trim() === rootTopicTitle() });
+  const dataRootTitle = rootTitleFromNodes(data.nodes);
+  const dataTitle = String(data.title || "").trim();
+  documentTitleInput.value = projectDisplayTitle(data);
+  titleEditedByUser = Boolean(dataTitle) && !shouldUseRootTitle(dataTitle) && dataTitle !== dataRootTitle;
   updateHistoryButtons();
   suppressAutosaveMark = !markDirty;
   render();
@@ -3781,7 +3816,7 @@ async function writeWorkspaceTrashEntry(entry) {
     deletedAt: new Date().toISOString(),
     originalPath: entry.path,
     originalName: entry.name,
-    title: data.title || workspaceEntryDisplayName(entry),
+    title: projectDisplayTitle(data) || workspaceEntryDisplayName(entry),
     updatedAt: entry.updatedAt || raw.savedAt || "",
     data: raw,
   };
@@ -3795,11 +3830,7 @@ function resetToUnsavedDefaultMap(status = "已移到垃圾桶") {
   clearWorkspaceFileIdentity();
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
-  applyProjectData({
-    title: ROOT_TOPIC_TEXT,
-    nodes: createDefaultNodes(),
-    view: { zoom: 1, pan: { x: 0, y: 0 } },
-  }, { localId: createLocalId(), status, markDirty: false });
+  applyProjectData(createDefaultProjectData(), { localId: createLocalId(), status, markDirty: false });
   updateMapReturnButton();
 }
 
@@ -3875,11 +3906,7 @@ function deleteLocalMap(id) {
     if (nextMap) {
       openLocalMap(nextMap.id, { keepHomeOpen: true });
     } else {
-      applyProjectData({
-        title: DEFAULT_DOCUMENT_TITLE,
-        nodes: createDefaultNodes(),
-        view: { zoom: 1, pan: { x: 0, y: 0 } },
-      }, {
+      applyProjectData(createDefaultProjectData(), {
         localId: createLocalId(),
         status: "已移入垃圾桶",
         markDirty: false,
@@ -3944,7 +3971,7 @@ function restoreLocalMap(id) {
     localStorage.setItem(`${LOCAL_MAP_PREFIX}${id}`, JSON.stringify({ ...entry.data, localId: id }));
     updateLocalIndexEntry({
       ...entry.data,
-      title: data.title,
+      title: projectDisplayTitle(data),
       savedAt: entry.data.savedAt || entry.updatedAt || new Date().toISOString(),
       nodes: data.nodes,
     }, id);
@@ -4000,11 +4027,7 @@ function newLocalMap({ keepHomeOpen = false } = {}) {
   workspaceConflictPaused = false;
   workspaceConflictFileName = null;
   hideWorkspaceConflictDialog();
-  applyProjectData({
-    title: ROOT_TOPIC_TEXT,
-    nodes: createDefaultNodes(),
-    view: { zoom: 1, pan: { x: 0, y: 0 } },
-  }, { localId: createLocalId(), status: "已新建工作目录思维导图", markDirty: true });
+  applyProjectData(createDefaultProjectData(), { localId: createLocalId(), status: "已新建工作目录思维导图", markDirty: true });
   autosaveLocal();
   updateMapReturnButton();
   if (!keepHomeOpen) closeHome();
