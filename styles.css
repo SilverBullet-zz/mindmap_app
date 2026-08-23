@@ -26,6 +26,10 @@
   --motion: 220ms cubic-bezier(0.2, 0, 0.2, 1);
   --motion-pop: 360ms cubic-bezier(0.18, 1.18, 0.3, 1);
   --workspace-sidebar-width: 260px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
@@ -101,6 +105,7 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
 }
 
 .topbar {
@@ -109,8 +114,8 @@ textarea:focus-visible {
   grid-template-columns: 160px minmax(180px, 280px) minmax(280px, 1fr) max-content;
   align-items: center;
   gap: 12px;
-  height: 62px;
-  padding: 0 18px;
+  min-height: calc(62px + var(--safe-top));
+  padding: var(--safe-top) calc(18px + var(--safe-right)) 0 calc(18px + var(--safe-left));
   border-bottom: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(247, 255, 251, 0.95));
   box-shadow: var(--shadow-xs);
@@ -709,8 +714,10 @@ textarea:focus-visible {
   min-width: 190px;
   max-width: 420px;
   border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(246, 255, 250, 0.93));
-  box-shadow: var(--shadow-xs);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 253, 248, 0.96)),
+    radial-gradient(circle at 18% 0%, rgba(183, 226, 255, 0.22), transparent 30%);
+  box-shadow: 1px 0 0 rgba(122, 176, 157, 0.08);
   backdrop-filter: blur(14px);
 }
 
@@ -722,8 +729,8 @@ textarea:focus-visible {
 
 .workspace-sidebar-content {
   display: grid;
-  gap: 14px;
-  padding: 16px 14px;
+  gap: 12px;
+  padding: 14px 12px;
 }
 
 .workspace-sidebar.collapsed .workspace-sidebar-content,
@@ -738,11 +745,11 @@ textarea:focus-visible {
   top: 14px;
   width: 24px;
   height: 44px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid rgba(123, 192, 174, 0.52);
   border-radius: 999px;
-  background: var(--surface-strong);
+  background: rgba(255, 255, 255, 0.96);
   color: #427369;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 8px 18px rgba(45, 107, 90, 0.12);
   cursor: pointer;
 }
 
@@ -770,8 +777,10 @@ textarea:focus-visible {
 }
 
 .workspace-sidebar-header {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .workspace-kicker {
@@ -787,26 +796,42 @@ textarea:focus-visible {
   font-size: 16px;
 }
 
+.workspace-mode-pill {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid rgba(119, 191, 174, 0.48);
+  border-radius: 999px;
+  color: #347263;
+  background: rgba(239, 255, 248, 0.9);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+}
+
 .workspace-folder-card {
   display: grid;
-  grid-template-columns: 24px 1fr;
-  align-items: start;
-  gap: 10px;
+  grid-template-columns: 26px 1fr;
+  align-items: center;
+  gap: 11px;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: linear-gradient(180deg, #ffffff, var(--surface-muted));
-  box-shadow: var(--shadow-xs);
+  padding: 11px;
+  border: 1px solid rgba(196, 225, 214, 0.86);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: 0 10px 28px rgba(67, 119, 101, 0.08);
 }
 
 .workspace-sidebar.local-fallback .workspace-folder-card {
   border-style: dashed;
-  background: linear-gradient(180deg, #ffffff, rgba(235, 250, 243, 0.92));
+  background: linear-gradient(180deg, #ffffff, rgba(239, 247, 255, 0.72));
 }
 
 .workspace-folder-icon {
   color: #3f8174;
+}
+
+.workspace-folder-meta {
+  min-width: 0;
 }
 
 .workspace-folder-card span:not(.folder-icon),
@@ -832,11 +857,24 @@ textarea:focus-visible {
 
 .workspace-sidebar-actions {
   display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
 .workspace-sidebar-actions .secondary-button {
   width: 100%;
+  min-height: 34px;
+  border-color: rgba(139, 202, 185, 0.62);
+  background: rgba(255, 255, 255, 0.72);
+  color: #315d52;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workspace-sidebar-actions .secondary-button:hover:not(:disabled) {
+  border-color: rgba(79, 164, 142, 0.78);
+  background: rgba(238, 255, 248, 0.92);
+  box-shadow: 0 8px 18px rgba(76, 145, 125, 0.11);
 }
 
 .workspace-file-section {
@@ -855,14 +893,28 @@ textarea:focus-visible {
   font-weight: 750;
 }
 
+.workspace-file-header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.workspace-file-header small {
+  color: #82948c;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .workspace-file-list {
   display: grid;
-  gap: 6px;
+  gap: 3px;
   min-width: 0;
   max-height: min(42vh, 360px);
   min-height: 42px;
   overflow: auto;
-  padding-right: 2px;
+  padding: 2px 2px 2px 0;
 }
 
 .workspace-file-list.drop-root {
@@ -872,25 +924,25 @@ textarea:focus-visible {
 }
 
 .workspace-file-empty {
-  padding: 10px;
-  border: 1px dashed #c9e5d8;
-  border-radius: 8px;
-  color: #728279;
+  padding: 12px;
+  border: 1px dashed rgba(168, 213, 196, 0.9);
+  border-radius: 10px;
+  color: #687b72;
   font-size: 12px;
   line-height: 1.45;
-  background: rgba(247, 255, 251, 0.72);
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .workspace-tree-row {
   --tree-depth: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
-  min-height: 32px;
-  padding: 6px 7px 6px calc(8px + var(--tree-depth) * 18px);
+  min-height: 34px;
+  padding: 5px 6px 5px calc(8px + var(--tree-depth) * 18px);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   transition:
     background-color var(--motion-fast),
@@ -900,9 +952,8 @@ textarea:focus-visible {
 }
 
 .workspace-tree-row:hover {
-  border-color: #c7e7dc;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: var(--shadow-xs);
+  border-color: rgba(176, 221, 209, 0.78);
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .workspace-tree-row.folder {
@@ -916,8 +967,8 @@ textarea:focus-visible {
 }
 
 .workspace-tree-row.folder[aria-expanded="true"] {
-  border-color: #c7e7dc;
-  background: rgba(229, 245, 236, 0.88);
+  border-color: rgba(160, 210, 198, 0.78);
+  background: rgba(232, 247, 241, 0.76);
 }
 
 .workspace-tree-row.folder.drop-target {
@@ -929,6 +980,7 @@ textarea:focus-visible {
 .workspace-tree-row.file {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  color: #26352e;
 }
 
 .workspace-tree-row.file.local {
@@ -936,9 +988,9 @@ textarea:focus-visible {
 }
 
 .workspace-tree-row.file.current {
-  border-color: #82cdbb;
-  background: rgba(222, 246, 237, 0.86);
-  box-shadow: 0 8px 24px rgba(79, 151, 132, 0.12);
+  border-color: rgba(96, 178, 158, 0.78);
+  background: linear-gradient(90deg, rgba(222, 248, 239, 0.92), rgba(244, 251, 255, 0.78));
+  box-shadow: inset 3px 0 0 rgba(74, 155, 134, 0.78);
 }
 
 .workspace-tree-row.file.dragging {
@@ -973,7 +1025,7 @@ textarea:focus-visible {
   color: #26352e;
   font: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 760;
   overflow: hidden;
   text-align: left;
   text-overflow: ellipsis;
@@ -982,11 +1034,11 @@ textarea:focus-visible {
 }
 
 .workspace-current-badge {
-  padding: 2px 7px;
-  border: 1px solid #94d8c6;
+  padding: 2px 6px;
+  border: 1px solid rgba(112, 194, 174, 0.72);
   border-radius: 999px;
   color: #357565;
-  background: rgba(242, 255, 250, 0.9);
+  background: rgba(245, 255, 251, 0.9);
   font-size: 10px;
   font-weight: 800;
   white-space: nowrap;
@@ -995,7 +1047,7 @@ textarea:focus-visible {
 .workspace-file-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .workspace-file-actions .text-button,
@@ -2679,8 +2731,8 @@ textarea:focus-visible {
   .topbar {
     grid-template-columns: auto 1fr auto;
     height: auto;
-    min-height: 56px;
-    padding: 0 10px;
+    min-height: calc(56px + var(--safe-top));
+    padding: var(--safe-top) calc(10px + var(--safe-right)) 0 calc(10px + var(--safe-left));
   }
 
   .search-box {

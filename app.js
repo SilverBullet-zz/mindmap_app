@@ -191,9 +191,11 @@ const workspaceCollapseButton = document.querySelector("#workspace-collapse");
 const workspaceResizer = document.querySelector("#workspace-resizer");
 const workspaceFolderName = document.querySelector("#workspace-folder-name");
 const workspaceFolderStatus = document.querySelector("#workspace-folder-status");
+const workspaceModeLabel = document.querySelector("#workspace-mode-label");
 const chooseWorkspaceFolderButton = document.querySelector("#choose-workspace-folder");
 const openWorkspaceFileButton = document.querySelector("#open-workspace-file");
 const refreshWorkspaceFilesButton = document.querySelector("#refresh-workspace-files");
+const workspaceFileCount = document.querySelector("#workspace-file-count");
 const workspaceFileList = document.querySelector("#workspace-file-list");
 const mapReturnButton = document.querySelector("#map-return-button");
 const homeButton = document.querySelector("#home-button");
@@ -1817,6 +1819,9 @@ function updateWorkspaceUi() {
   const collapsed = localStorageAvailable() && localStorage.getItem(WORKSPACE_COLLAPSED_KEY) === "true";
   workspaceSidebar.classList.toggle("collapsed", collapsed);
   workspaceSidebar.classList.toggle("local-fallback", !workspaceDirectoryHandle && !supported);
+  if (workspaceModeLabel) {
+    workspaceModeLabel.textContent = workspaceDirectoryHandle ? "文件夹" : supported ? "未设置" : "本地";
+  }
   workspaceCollapseButton.title = collapsed ? "展开工作目录" : "收起工作目录";
   workspaceCollapseButton.setAttribute("aria-label", workspaceCollapseButton.title);
   chooseWorkspaceFolderButton.textContent = supported ? "选择文件夹" : "本地模式";
@@ -1932,21 +1937,29 @@ function pathDepth(path) {
   return String(path || "").split("/").filter(Boolean).length - 1;
 }
 
+function updateWorkspaceFileCount(count = 0) {
+  if (!workspaceFileCount) return;
+  workspaceFileCount.textContent = `${count} 个`;
+}
+
 function renderWorkspaceFiles() {
   if (!workspaceFileList) return;
   updateWorkspaceStatusText();
   workspaceFileList.replaceChildren();
   if (!workspaceDirectoryHandle) {
     if (!supportsWorkspaceDirectoryAccess()) {
+      updateWorkspaceFileCount(localStorageAvailable() ? readActiveLocalIndex({ repair: true }).length : 0);
       renderBrowserLocalWorkspaceFiles();
       return;
     }
+    updateWorkspaceFileCount(0);
     const empty = document.createElement("div");
     empty.className = "workspace-file-empty";
     empty.textContent = "选择工作目录后显示其中的 mindmap 文件";
     workspaceFileList.append(empty);
     return;
   }
+  updateWorkspaceFileCount(workspaceFiles.length);
   if (!workspaceTree.length) {
     const empty = document.createElement("div");
     empty.className = "workspace-file-empty";

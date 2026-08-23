@@ -2,10 +2,13 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#eefbf3" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="枝图" />
     <title>枝图 - 思维导图</title>
-    <link rel="stylesheet" href="./styles.css?v=40" />
+    <link rel="stylesheet" href="./styles.css?v=42" />
   </head>
   <body>
     <div class="app-shell">
@@ -104,12 +107,15 @@
           <button class="workspace-collapse" id="workspace-collapse" type="button" title="收起工作目录" aria-label="收起工作目录"></button>
           <div class="workspace-sidebar-content">
             <div class="workspace-sidebar-header">
-              <span class="workspace-kicker">Working Folder</span>
-              <strong>工作目录</strong>
+              <div>
+                <span class="workspace-kicker">Workspace</span>
+                <strong>工作目录</strong>
+              </div>
+              <span class="workspace-mode-pill" id="workspace-mode-label">未设置</span>
             </div>
             <div class="workspace-folder-card">
               <span class="folder-icon workspace-folder-icon" aria-hidden="true"></span>
-              <div>
+              <div class="workspace-folder-meta">
                 <span id="workspace-folder-name">未选择文件夹</span>
                 <small id="workspace-folder-status">保存和打开会先使用这里</small>
               </div>
@@ -120,8 +126,11 @@
             </div>
             <div class="workspace-file-section">
               <div class="workspace-file-header">
-                <span>文件</span>
-                <button class="text-button" id="refresh-workspace-files" type="button">刷新</button>
+                <div>
+                  <span>文件</span>
+                  <small id="workspace-file-count">0 个</small>
+                </div>
+                <button class="text-button" id="refresh-workspace-files" type="button" title="刷新文件列表">刷新</button>
               </div>
               <div class="workspace-file-list" id="workspace-file-list"></div>
             </div>
@@ -242,6 +251,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=62"></script>
+    <script src="./app.js?v=64"></script>
   </body>
 </html>
