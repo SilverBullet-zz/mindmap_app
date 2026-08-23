@@ -1823,9 +1823,11 @@ function updateWorkspaceUi() {
   updateWorkspaceStatusText({ supported });
   const collapsed = localStorageAvailable() && localStorage.getItem(WORKSPACE_COLLAPSED_KEY) === "true";
   workspaceSidebar.classList.toggle("collapsed", collapsed);
+  workspaceSidebar.classList.toggle("connected", Boolean(workspaceDirectoryHandle));
+  workspaceSidebar.classList.toggle("unconfigured", !workspaceDirectoryHandle && supported);
   workspaceSidebar.classList.toggle("local-fallback", !workspaceDirectoryHandle && !supported);
   if (workspaceModeLabel) {
-    workspaceModeLabel.textContent = workspaceDirectoryHandle ? "文件夹" : supported ? "未设置" : "本地";
+    workspaceModeLabel.textContent = workspaceDirectoryHandle ? "已连接" : supported ? "未设置" : "本地模式";
   }
   workspaceCollapseButton.title = collapsed ? "展开工作目录" : "收起工作目录";
   workspaceCollapseButton.setAttribute("aria-label", workspaceCollapseButton.title);
@@ -1849,15 +1851,34 @@ function workspaceCurrentFileLabel() {
 function updateWorkspaceStatusText({ supported = supportsWorkspaceDirectoryAccess() } = {}) {
   if (!workspaceFolderStatus) return;
   if (!supported) {
-    workspaceFolderStatus.textContent = "此设备不支持文件夹授权，使用浏览器本地/导入导出";
+    workspaceFolderStatus.textContent = "此设备不支持文件夹授权，使用浏览器本地与导入/导出";
     return;
   }
   if (!workspaceDirectoryHandle) {
-    workspaceFolderStatus.textContent = "选择后作为打开/保存默认位置";
+    workspaceFolderStatus.textContent = "选择文件夹后，打开/保存/链接都会使用同一位置";
     return;
   }
   const currentFile = workspaceCurrentFileLabel();
   workspaceFolderStatus.textContent = currentFile ? `当前：${currentFile}` : "打开/保存默认使用此位置";
+}
+
+function renderWorkspaceEmptyState(title, detail, { actionText = "", action = "" } = {}) {
+  const empty = document.createElement("div");
+  empty.className = "workspace-file-empty";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  const message = document.createElement("span");
+  message.textContent = detail;
+  empty.append(heading, message);
+  if (actionText && action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "text-button";
+    button.dataset.action = action;
+    button.textContent = actionText;
+    empty.append(button);
+  }
+  workspaceFileList.append(empty);
 }
 
 function setWorkspaceCollapsed(collapsed, { persist = true } = {}) {
@@ -1958,18 +1979,20 @@ function renderWorkspaceFiles() {
       return;
     }
     updateWorkspaceFileCount(0);
-    const empty = document.createElement("div");
-    empty.className = "workspace-file-empty";
-    empty.textContent = "选择工作目录后显示其中的 mindmap 文件";
-    workspaceFileList.append(empty);
+    renderWorkspaceEmptyState(
+      "未连接工作目录",
+      "选择一个文件夹后，首页、自动保存、链接和文件列表会共用这个位置。",
+      { actionText: "选择文件夹", action: "choose-workspace-folder" }
+    );
     return;
   }
   updateWorkspaceFileCount(workspaceFiles.length);
   if (!workspaceTree.length) {
-    const empty = document.createElement("div");
-    empty.className = "workspace-file-empty";
-    empty.textContent = "没有找到 .mindmap.json 文件";
-    workspaceFileList.append(empty);
+    renderWorkspaceEmptyState(
+      "没有 mindmap 文件",
+      "当前文件夹中暂时没有 .mindmap.json。编辑当前画布后会自动保存到这里。",
+      { actionText: "刷新", action: "refresh-workspace-files" }
+    );
     return;
   }
 
@@ -2161,12 +2184,13 @@ function hasLinkableWorkspaceFile(entry) {
 function renderBrowserLocalWorkspaceFiles() {
   const items = localStorageAvailable() ? readActiveLocalIndex({ repair: true }) : [];
   if (!items.length) {
-    const empty = document.createElement("div");
-    empty.className = "workspace-file-empty";
-    empty.textContent = localStorageAvailable()
-      ? "此设备使用浏览器本地模式。打开或新建 map 后会显示在这里。"
-      : "此设备无法访问文件夹，且浏览器本地存储不可用。请使用导入/导出文件。";
-    workspaceFileList.append(empty);
+    renderWorkspaceEmptyState(
+      localStorageAvailable() ? "浏览器本地为空" : "无法使用本地存储",
+      localStorageAvailable()
+        ? "此设备不能直接授权文件夹。新建或导入 map 后，会先保存在这个浏览器里。"
+        : "此设备无法访问文件夹，也不能写入浏览器存储。请使用导入和导出文件。",
+      { actionText: localStorageAvailable() ? "导入文件" : "", action: localStorageAvailable() ? "open-file-picker" : "" }
+    );
     return;
   }
   items.forEach((entry) => {
@@ -4631,6 +4655,18 @@ function workspaceDropTargetFolder(event) {
 
 workspaceFileList.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "choose-workspace-folder") {
+    chooseWorkspaceDirectory();
+    return;
+  }
+  if (action === "open-file-picker") {
+    openProjectFromPicker();
+    return;
+  }
+  if (action === "refresh-workspace-files") {
+    refreshWorkspaceFiles();
+    return;
+  }
   const localItem = event.target.closest(".workspace-tree-row.local");
   if (localItem && (action === "open-local-workspace" || action === "delete-local-workspace")) {
     const id = localItem.dataset.localId;

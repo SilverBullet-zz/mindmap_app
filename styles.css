@@ -808,6 +808,24 @@ textarea:focus-visible {
   letter-spacing: 0.02em;
 }
 
+.workspace-sidebar.connected .workspace-mode-pill {
+  border-color: rgba(82, 171, 145, 0.52);
+  color: #276f5c;
+  background: rgba(225, 250, 239, 0.96);
+}
+
+.workspace-sidebar.unconfigured .workspace-mode-pill {
+  border-color: rgba(209, 188, 119, 0.5);
+  color: #7b6227;
+  background: rgba(255, 249, 225, 0.94);
+}
+
+.workspace-sidebar.local-fallback .workspace-mode-pill {
+  border-color: rgba(111, 157, 204, 0.46);
+  color: #426f9b;
+  background: rgba(238, 247, 255, 0.94);
+}
+
 .workspace-folder-card {
   display: grid;
   grid-template-columns: 26px 1fr;
@@ -826,8 +844,21 @@ textarea:focus-visible {
   background: linear-gradient(180deg, #ffffff, rgba(239, 247, 255, 0.72));
 }
 
+.workspace-sidebar.unconfigured .workspace-folder-card {
+  border-color: rgba(225, 206, 145, 0.84);
+  background: linear-gradient(180deg, #ffffff, rgba(255, 250, 233, 0.78));
+}
+
 .workspace-folder-icon {
   color: #3f8174;
+}
+
+.workspace-sidebar.unconfigured .workspace-folder-icon {
+  color: #8c7435;
+}
+
+.workspace-sidebar.local-fallback .workspace-folder-icon {
+  color: #507ca5;
 }
 
 .workspace-folder-meta {
@@ -924,13 +955,32 @@ textarea:focus-visible {
 }
 
 .workspace-file-empty {
-  padding: 12px;
+  display: grid;
+  gap: 6px;
+  padding: 13px;
   border: 1px dashed rgba(168, 213, 196, 0.9);
   border-radius: 10px;
   color: #687b72;
   font-size: 12px;
   line-height: 1.45;
   background: rgba(255, 255, 255, 0.55);
+}
+
+.workspace-file-empty strong {
+  color: #2a3d34;
+  font-size: 12px;
+}
+
+.workspace-file-empty span {
+  color: #6e8178;
+}
+
+.workspace-file-empty .text-button {
+  justify-self: start;
+  margin-top: 2px;
+  color: #357565;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .workspace-tree-row {
