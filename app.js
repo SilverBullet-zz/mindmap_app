@@ -1817,6 +1817,28 @@ function supportsSystemSavePicker() {
   return Boolean(window.showSaveFilePicker);
 }
 
+function runtimeSourceState() {
+  if (window.location.protocol === "file:") {
+    return {
+      label: "文件直开",
+      tone: "warn",
+      detail: "当前从 file:// 打开；建议使用 http://127.0.0.1:4173/，避免和本地服务器形成两套浏览器状态。",
+    };
+  }
+  if (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") {
+    return {
+      label: "本地服务器",
+      tone: "ok",
+      detail: "",
+    };
+  }
+  return {
+    label: "网页模式",
+    tone: window.isSecureContext ? "ok" : "warn",
+    detail: window.isSecureContext ? "" : "当前不是安全上下文，部分文件夹能力可能不可用。",
+  };
+}
+
 function setWorkspaceCapability(label, value, tone = "ok") {
   const item = document.createElement("span");
   item.className = `workspace-capability ${tone}`;
@@ -1833,7 +1855,13 @@ function updateWorkspaceCapabilities() {
   const folderSupported = supportsWorkspaceDirectoryAccess();
   const localSupported = localStorageAvailable();
   const pickerSupported = supportsSystemOpenPicker() || supportsSystemSavePicker();
+  const runtime = runtimeSourceState();
   workspaceCapabilities.replaceChildren(
+    setWorkspaceCapability(
+      "运行方式",
+      runtime.label,
+      runtime.tone
+    ),
     setWorkspaceCapability(
       "文件夹",
       workspaceDirectoryHandle ? "已连接" : folderSupported ? "可授权" : "不可用",
@@ -1887,6 +1915,11 @@ function workspaceCurrentFileLabel() {
 
 function updateWorkspaceStatusText({ supported = supportsWorkspaceDirectoryAccess() } = {}) {
   if (!workspaceFolderStatus) return;
+  const runtime = runtimeSourceState();
+  if (runtime.detail) {
+    workspaceFolderStatus.textContent = runtime.detail;
+    return;
+  }
   if (!supported) {
     workspaceFolderStatus.textContent = "此设备不支持文件夹授权，使用浏览器本地与导入/导出";
     return;
