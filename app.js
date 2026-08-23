@@ -1811,6 +1811,12 @@ function setWorkspaceCollapsed(collapsed, { persist = true } = {}) {
   workspaceCollapseButton.setAttribute("aria-label", workspaceCollapseButton.title);
 }
 
+function openWorkspacePanel() {
+  setWorkspaceCollapsed(false);
+  renderWorkspaceFiles();
+  showStatus("已打开工作目录面板", 1200);
+}
+
 async function initializeWorkspaceDirectory() {
   updateWorkspaceUi();
   try {
@@ -4315,6 +4321,12 @@ viewport.addEventListener("keydown", (event) => {
 
 document.addEventListener("keydown", async (event) => {
   const command = event.ctrlKey || event.metaKey;
+  if (command && event.shiftKey && !event.altKey && event.key.toLowerCase() === "p") {
+    event.preventDefault();
+    event.stopPropagation();
+    openWorkspacePanel();
+    return;
+  }
   if (event.key === "Escape" && nodeDrag) {
     event.preventDefault();
     finishNodeDrag(null, true);
