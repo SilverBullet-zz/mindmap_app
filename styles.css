@@ -800,6 +800,11 @@ textarea:focus-visible {
   box-shadow: var(--shadow-xs);
 }
 
+.workspace-sidebar.local-fallback .workspace-folder-card {
+  border-style: dashed;
+  background: linear-gradient(180deg, #ffffff, rgba(235, 250, 243, 0.92));
+}
+
 .workspace-folder-icon {
   color: #3f8174;
 }
@@ -924,6 +929,10 @@ textarea:focus-visible {
 .workspace-tree-row.file {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.workspace-tree-row.file.local {
+  cursor: default;
 }
 
 .workspace-tree-row.file.current {

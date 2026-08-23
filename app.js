@@ -1764,15 +1764,31 @@ async function hasWorkspacePermission(mode = "read") {
   return (await workspaceDirectoryHandle.queryPermission({ mode })) === "granted";
 }
 
+function supportsWorkspaceDirectoryAccess() {
+  return Boolean(window.showDirectoryPicker && window.showOpenFilePicker && window.showSaveFilePicker);
+}
+
+function supportsSystemOpenPicker() {
+  return Boolean(window.showOpenFilePicker);
+}
+
+function supportsSystemSavePicker() {
+  return Boolean(window.showSaveFilePicker);
+}
+
 function updateWorkspaceUi() {
   const savedName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_NAME_KEY) : "";
-  const supported = Boolean(window.showDirectoryPicker && window.showOpenFilePicker && window.showSaveFilePicker);
-  workspaceFolderName.textContent = workspaceDirectoryHandle?.name || savedName || "未选择文件夹";
+  const supported = supportsWorkspaceDirectoryAccess();
+  workspaceFolderName.textContent = workspaceDirectoryHandle?.name || savedName || (supported ? "未选择文件夹" : "浏览器本地");
   updateWorkspaceStatusText({ supported });
   const collapsed = localStorageAvailable() && localStorage.getItem(WORKSPACE_COLLAPSED_KEY) === "true";
   workspaceSidebar.classList.toggle("collapsed", collapsed);
+  workspaceSidebar.classList.toggle("local-fallback", !workspaceDirectoryHandle && !supported);
   workspaceCollapseButton.title = collapsed ? "展开工作目录" : "收起工作目录";
   workspaceCollapseButton.setAttribute("aria-label", workspaceCollapseButton.title);
+  chooseWorkspaceFolderButton.textContent = supported ? "选择文件夹" : "本地模式";
+  chooseWorkspaceFolderButton.disabled = !supported;
+  openWorkspaceFileButton.textContent = supported ? "打开文件" : "导入文件";
   const width = Number(localStorageAvailable() ? localStorage.getItem(WORKSPACE_WIDTH_KEY) : 0);
   if (Number.isFinite(width) && width >= 190 && width <= 420) {
     document.documentElement.style.setProperty("--workspace-sidebar-width", `${width}px`);
@@ -1787,10 +1803,10 @@ function workspaceCurrentFileLabel() {
   return displayName || currentWorkspaceFileName;
 }
 
-function updateWorkspaceStatusText({ supported = Boolean(window.showDirectoryPicker && window.showOpenFilePicker && window.showSaveFilePicker) } = {}) {
+function updateWorkspaceStatusText({ supported = supportsWorkspaceDirectoryAccess() } = {}) {
   if (!workspaceFolderStatus) return;
   if (!supported) {
-    workspaceFolderStatus.textContent = "当前浏览器不支持目录授权，使用普通文件选择";
+    workspaceFolderStatus.textContent = "此设备不支持文件夹授权，使用浏览器本地/导入导出";
     return;
   }
   if (!workspaceDirectoryHandle) {
@@ -1833,8 +1849,9 @@ async function initializeWorkspaceDirectory() {
 }
 
 async function chooseWorkspaceDirectory() {
-  if (!window.showDirectoryPicker) {
-    showStatus("当前浏览器不支持选择工作目录", 2200);
+  if (!supportsWorkspaceDirectoryAccess()) {
+    updateWorkspaceUi();
+    showStatus("此设备不支持选择文件夹，请使用导入文件和导出保存", 2600);
     return;
   }
   try {
@@ -1887,6 +1904,10 @@ function renderWorkspaceFiles() {
   updateWorkspaceStatusText();
   workspaceFileList.replaceChildren();
   if (!workspaceDirectoryHandle) {
+    if (!supportsWorkspaceDirectoryAccess()) {
+      renderBrowserLocalWorkspaceFiles();
+      return;
+    }
     const empty = document.createElement("div");
     empty.className = "workspace-file-empty";
     empty.textContent = "选择工作目录后显示其中的 mindmap 文件";
@@ -2084,6 +2105,52 @@ function hasLinkableWorkspaceFile(entry) {
   if (entry?.kind === "file") return true;
   if (entry?.kind !== "directory") return false;
   return entry.children.some((child) => hasLinkableWorkspaceFile(child));
+}
+
+function renderBrowserLocalWorkspaceFiles() {
+  const items = localStorageAvailable() ? readActiveLocalIndex({ repair: true }) : [];
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "workspace-file-empty";
+    empty.textContent = localStorageAvailable()
+      ? "此设备使用浏览器本地模式。打开或新建 map 后会显示在这里。"
+      : "此设备无法访问文件夹，且浏览器本地存储不可用。请使用导入/导出文件。";
+    workspaceFileList.append(empty);
+    return;
+  }
+  items.forEach((entry) => {
+    const item = document.createElement("div");
+    const isCurrent = entry.id === currentLocalId;
+    item.className = `workspace-tree-row file local${isCurrent ? " current" : ""}`;
+    item.dataset.localId = entry.id;
+    item.style.setProperty("--tree-depth", 0);
+
+    const name = document.createElement("span");
+    name.className = "workspace-file-name";
+    name.textContent = entry.title || DEFAULT_DOCUMENT_TITLE;
+
+    const actions = document.createElement("span");
+    actions.className = "workspace-file-actions";
+    if (isCurrent) {
+      const current = document.createElement("span");
+      current.className = "workspace-current-badge";
+      current.textContent = "当前";
+      actions.append(current);
+    }
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "text-button";
+    open.dataset.action = "open-local-workspace";
+    open.textContent = "打开";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.dataset.action = "delete-local-workspace";
+    remove.className = "text-button danger";
+    remove.textContent = "删除";
+    actions.append(open, remove);
+    item.append(name, actions);
+    workspaceFileList.append(item);
+  });
 }
 
 async function scanWorkspaceTrash() {
@@ -2986,12 +3053,13 @@ async function followNodeMapLink(id) {
 }
 
 async function openProjectFromPicker() {
-  if (!window.showOpenFilePicker) {
+  if (!supportsSystemOpenPicker()) {
     openFileInput.click();
     return;
   }
+  let options;
   try {
-    const options = {
+    options = {
       id: "zhitu-open-folder",
       multiple: false,
       types: [{
@@ -3005,8 +3073,21 @@ async function openProjectFromPicker() {
     const [handle] = await window.showOpenFilePicker(options);
     if (!handle) return;
     const file = await handle.getFile();
-    await openProject(file, { status: "工程已导入，保存时会写入工作目录" });
+    await openProject(file, { status: workspaceDirectoryHandle ? "工程已导入，保存时会写入工作目录" : "工程已导入，保存到浏览器本地" });
   } catch (error) {
+    if (error?.name !== "AbortError" && options?.startIn) {
+      try {
+        delete options.startIn;
+        const [handle] = await window.showOpenFilePicker(options);
+        if (!handle) return;
+        const file = await handle.getFile();
+        await openProject(file, { status: workspaceDirectoryHandle ? "工程已导入，保存时会写入工作目录" : "工程已导入，保存到浏览器本地" });
+        return;
+      } catch (retryError) {
+        if (retryError?.name === "AbortError") return;
+        console.error(retryError);
+      }
+    }
     if (error?.name !== "AbortError") {
       console.error(error);
       openFileInput.click();
@@ -3277,9 +3358,15 @@ function formatLocalTime(value) {
 function renderHomeList() {
   if (!homeList) return;
   const isTrash = homeMode === "trash";
-  const index = workspaceDirectoryHandle ? isTrash ? workspaceTrashItems : workspaceHomeItems : [];
+  const usingWorkspace = Boolean(workspaceDirectoryHandle);
+  const usingLocalFallback = !usingWorkspace && !supportsWorkspaceDirectoryAccess();
+  const index = usingWorkspace
+    ? isTrash ? workspaceTrashItems : workspaceHomeItems
+    : usingLocalFallback && localStorageAvailable()
+      ? isTrash ? readLocalTrash() : readActiveLocalIndex({ repair: true })
+      : [];
   if (trashButton) {
-    trashButton.hidden = !workspaceDirectoryHandle;
+    trashButton.hidden = !(usingWorkspace || usingLocalFallback);
     trashButton.setAttribute("aria-pressed", String(isTrash));
     trashButton.textContent = isTrash ? "返回文件" : "垃圾桶";
   }
@@ -3287,17 +3374,21 @@ function renderHomeList() {
   if (!index.length) {
     const empty = document.createElement("div");
     empty.className = "home-empty";
-    empty.innerHTML = workspaceDirectoryHandle
+    empty.innerHTML = usingWorkspace
       ? isTrash
         ? "<strong>垃圾桶是空的</strong><span>删除的思维导图会先移动到工作目录的 .mindmap_trash 文件夹。</span>"
         : "<strong>工作目录中还没有思维导图</strong><span>当前画布会每 5 秒自动保存到这个文件夹，并出现在这里。</span>"
-      : "<strong>还没有选择工作目录</strong><span>首页只显示当前 Working Folder 中的思维导图。</span>";
+      : usingLocalFallback
+        ? isTrash
+          ? "<strong>本地垃圾桶是空的</strong><span>此设备不支持文件夹授权，删除的 map 会先保存在浏览器本地垃圾桶。</span>"
+          : "<strong>浏览器本地还没有思维导图</strong><span>此设备不支持文件夹授权。新建或导入 map 后会自动保存在本地列表。</span>"
+        : "<strong>还没有选择工作目录</strong><span>首页只显示当前 Working Folder 中的思维导图。</span>";
     homeList.append(empty);
     return;
   }
   index.forEach((item) => {
     const card = document.createElement("article");
-    const current = !isTrash && item.path === currentWorkspaceFileName;
+    const current = !isTrash && (usingWorkspace ? item.path === currentWorkspaceFileName : item.id === currentLocalId);
     card.className = `home-card${current ? " current" : ""}${isTrash ? " trashed" : ""}`;
     card.dataset.id = item.id;
     if (item.path) card.dataset.name = item.path;
@@ -3305,9 +3396,12 @@ function renderHomeList() {
     const title = document.createElement("strong");
     title.textContent = item.title || DEFAULT_DOCUMENT_TITLE;
     const meta = document.createElement("span");
-    meta.textContent = isTrash
-      ? `${item.nodeCount || 0} 个主题 · 删除于 ${formatLocalTime(item.deletedAt)} · 原位置：${item.originalPath || "未知"}`
-      : `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${workspacePathDirectory(item.path) || "工作目录"}`;
+    if (isTrash) {
+      meta.textContent = `${item.nodeCount || 0} 个主题 · 删除于 ${formatLocalTime(item.deletedAt)} · 原位置：${item.originalPath || "浏览器本地"}`;
+    } else {
+      const location = usingWorkspace ? workspacePathDirectory(item.path) || "工作目录" : "浏览器本地";
+      meta.textContent = `${item.nodeCount || 0} 个主题 · ${formatLocalTime(item.updatedAt)} · ${location}`;
+    }
     const preview = document.createElement("small");
     preview.textContent = item.preview || ROOT_TOPIC_TEXT;
 
@@ -3344,7 +3438,7 @@ function renderHomeList() {
 }
 
 async function openHome() {
-  if (!workspaceDirectoryHandle) {
+  if (!workspaceDirectoryHandle && supportsWorkspaceDirectoryAccess()) {
     await chooseWorkspaceDirectory();
     if (!workspaceDirectoryHandle) {
       showStatus("需要先选择工作目录", 2200);
@@ -3353,7 +3447,7 @@ async function openHome() {
   }
   await autosaveLocal();
   homeMode = "maps";
-  await refreshWorkspaceFiles();
+  if (workspaceDirectoryHandle) await refreshWorkspaceFiles();
   renderHomeList();
   homeOverlay.hidden = false;
 }
@@ -4416,6 +4510,16 @@ function workspaceDropTargetFolder(event) {
 
 workspaceFileList.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
+  const localItem = event.target.closest(".workspace-tree-row.local");
+  if (localItem && (action === "open-local-workspace" || action === "delete-local-workspace")) {
+    const id = localItem.dataset.localId;
+    if (action === "open-local-workspace") {
+      autosaveLocal().then(() => openLocalMap(id));
+    } else {
+      deleteLocalMap(id);
+    }
+    return;
+  }
   const folder = event.target.closest("[data-action='toggle-folder']");
   if (folder) {
     const path = folder.dataset.path;
@@ -4585,7 +4689,10 @@ homeList.addEventListener("click", async (event) => {
 });
 openFileInput.addEventListener("change", () => {
   const file = openFileInput.files?.[0];
-  if (file) openProject(file);
+  if (file) {
+    openProject(file, { status: workspaceDirectoryHandle ? "工程已导入，保存时会写入工作目录" : "工程已导入，保存到浏览器本地" });
+  }
+  openFileInput.value = "";
 });
 
 documentTitleInput.addEventListener("input", () => {
@@ -5239,12 +5346,13 @@ function downloadBlob(blob, filename) {
 }
 
 async function saveBlobToFile(blob, filename, typeInfo) {
-  if (!window.showSaveFilePicker) {
+  if (!supportsSystemSavePicker()) {
     downloadBlob(blob, filename);
     return true;
   }
+  let options;
   try {
-    const options = {
+    options = {
       id: "zhitu-save-folder",
       suggestedName: filename,
       types: typeInfo ? [typeInfo] : undefined,
@@ -5259,6 +5367,19 @@ async function saveBlobToFile(blob, filename, typeInfo) {
     return true;
   } catch (error) {
     if (error?.name === "AbortError") return false;
+    if (options?.startIn) {
+      try {
+        delete options.startIn;
+        const handle = await window.showSaveFilePicker(options);
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return true;
+      } catch (retryError) {
+        if (retryError?.name === "AbortError") return false;
+        console.error(retryError);
+      }
+    }
     console.error(error);
     downloadBlob(blob, filename);
     return true;
