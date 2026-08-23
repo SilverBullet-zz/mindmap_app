@@ -195,6 +195,7 @@ const workspaceFolderName = document.querySelector("#workspace-folder-name");
 const workspaceFolderStatus = document.querySelector("#workspace-folder-status");
 const workspaceModeLabel = document.querySelector("#workspace-mode-label");
 const workspaceCapabilities = document.querySelector("#workspace-capabilities");
+const workspaceSourceNote = document.querySelector("#workspace-source-note");
 const chooseWorkspaceFolderButton = document.querySelector("#choose-workspace-folder");
 const openWorkspaceFileButton = document.querySelector("#open-workspace-file");
 const refreshWorkspaceFilesButton = document.querySelector("#refresh-workspace-files");
@@ -1880,12 +1881,35 @@ function updateWorkspaceCapabilities() {
   );
 }
 
+function workspaceSaveSourceText() {
+  const runtime = runtimeSourceState();
+  if (workspaceDirectoryHandle) {
+    const fileLabel = workspaceCurrentFileLabel();
+    return fileLabel
+      ? `自动保存到 Working Folder：${workspaceDirectoryHandle.name} / ${fileLabel}`
+      : `自动保存到 Working Folder：${workspaceDirectoryHandle.name}`;
+  }
+  if (!localStorageAvailable()) {
+    return "当前不能自动保存；请用导出保存 .mindmap.json 文件。";
+  }
+  if (runtime.label === "文件直开") {
+    return "当前自动保存到 file:// 这套浏览器本地状态；建议改用本地服务器打开。";
+  }
+  return "当前自动保存到浏览器本地；选择 Working Folder 后会改为文件夹保存。";
+}
+
+function updateWorkspaceSourceNote() {
+  if (!workspaceSourceNote) return;
+  workspaceSourceNote.textContent = workspaceSaveSourceText();
+}
+
 function updateWorkspaceUi() {
   const savedName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_NAME_KEY) : "";
   const supported = supportsWorkspaceDirectoryAccess();
   workspaceFolderName.textContent = workspaceDirectoryHandle?.name || savedName || (supported ? "未选择文件夹" : "浏览器本地");
   updateWorkspaceStatusText({ supported });
   updateWorkspaceCapabilities();
+  updateWorkspaceSourceNote();
   const collapsed = localStorageAvailable() && localStorage.getItem(WORKSPACE_COLLAPSED_KEY) === "true";
   workspaceSidebar.classList.toggle("collapsed", collapsed);
   workspaceSidebar.classList.toggle("connected", Boolean(workspaceDirectoryHandle));
@@ -2041,6 +2065,7 @@ function updateWorkspaceFileCount(count = 0) {
 function renderWorkspaceFiles() {
   if (!workspaceFileList) return;
   updateWorkspaceStatusText();
+  updateWorkspaceSourceNote();
   workspaceFileList.replaceChildren();
   if (!workspaceDirectoryHandle) {
     if (!supportsWorkspaceDirectoryAccess()) {
