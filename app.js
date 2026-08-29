@@ -120,7 +120,7 @@ let zoom = 1;
 let pan = { x: 0, y: 0 };
 let history = [];
 let future = [];
-let editSnapshot = "";
+let editSnapshot = null;
 let internalClipboard = null;
 let nodeDrag = null;
 let nodeResize = null;
@@ -824,11 +824,7 @@ function render() {
     label.className = "topic-label";
     label.contentEditable = node.id === editingId ? "true" : "false";
     label.spellcheck = false;
-    if (node.id === editingId) {
-      label.textContent = node.text;
-    } else {
-      appendHighlightedText(label, node.text);
-    }
+    appendTopicLabelContent(label, node, { editing: node.id === editingId });
     element.append(label);
 
     if (attachedImages.length) {
@@ -964,8 +960,8 @@ function beginEditing(id = selectedId, selectAll = false) {
   selectedId = id;
   selectedIds = new Set([id]);
   editingId = id;
-  editSnapshot = node.text;
-  hintText.textContent = "Enter 完成编辑 · Shift/Space+Enter 换行 · Tab 新建子主题";
+  editSnapshot = { text: node.text, richText: node.richText };
+  hintText.textContent = "Ctrl+Shift++ 上标 · Ctrl+Shift+- 下标 · Enter 完成";
   render();
   if (selectAll) {
     requestAnimationFrame(() => {
@@ -983,7 +979,9 @@ function syncEditingText() {
   if (!editingId) return;
   const node = getNode(editingId);
   const label = nodesLayer.querySelector(`[data-id="${editingId}"] .topic-label`);
-  if (node && label) node.text = editableText(label) || defaultTopicText(node);
+  if (!node || !label) return;
+  node.text = editableText(label) || defaultTopicText(node);
+  node.richText = sanitizeTopicRichText(label.innerHTML, node.text) || undefined;
 }
 
 function editableText(label) {
@@ -996,6 +994,61 @@ function editableText(label) {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function appendSanitizedTopicNodes(source, target) {
+  [...source.childNodes].forEach((child) => {
+    if (child.nodeType === Node.TEXT_NODE) {
+      target.append(document.createTextNode((child.textContent || "").replace(/\u200b/g, "")));
+      return;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = child.tagName.toLowerCase();
+    if (tag === "br") {
+      target.append(document.createTextNode("\n"));
+      return;
+    }
+    if (tag === "sup" || tag === "sub") {
+      const formatted = document.createElement(tag);
+      appendSanitizedTopicNodes(child, formatted);
+      if (formatted.textContent) target.append(formatted);
+      return;
+    }
+    const isBlock = tag === "div" || tag === "p";
+    if (isBlock && target.textContent && !target.textContent.endsWith("\n")) {
+      target.append(document.createTextNode("\n"));
+    }
+    appendSanitizedTopicNodes(child, target);
+    if (isBlock && target.textContent && !target.textContent.endsWith("\n")) {
+      target.append(document.createTextNode("\n"));
+    }
+  });
+}
+
+function sanitizeTopicRichText(value, expectedText) {
+  if (typeof value !== "string" || !/<\/?(?:sup|sub)\b/i.test(value)) return "";
+  const template = document.createElement("template");
+  template.innerHTML = value.slice(0, 4000);
+  const clean = document.createElement("span");
+  appendSanitizedTopicNodes(template.content, clean);
+  if (!clean.querySelector("sup, sub")) return "";
+  if (editableText(clean) !== String(expectedText || "")) return "";
+  const html = clean.innerHTML;
+  return html.length <= 2000 ? html : "";
+}
+
+function appendTopicLabelContent(container, node, { editing = false } = {}) {
+  if (!editing && searchState.query.trim() && hasSearchMatch(node.text)) {
+    appendHighlightedText(container, node.text);
+    return;
+  }
+  if (node.richText) {
+    const template = document.createElement("template");
+    template.innerHTML = node.richText;
+    container.append(template.content.cloneNode(true));
+    return;
+  }
+  container.textContent = node.text;
 }
 
 function escapeHtml(value) {
@@ -1440,13 +1493,99 @@ function insertEditingLineBreak() {
   markSaving();
 }
 
+function closestTopicScript(node, label) {
+  const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  const script = element?.closest?.("sup, sub");
+  return script && label.contains(script) ? script : null;
+}
+
+function selectUnwrappedTopicScript(element, selection) {
+  const children = [...element.childNodes];
+  if (!children.length) {
+    element.remove();
+    return false;
+  }
+  const first = children[0];
+  const last = children.at(-1);
+  element.replaceWith(...children);
+  const range = document.createRange();
+  range.setStartBefore(first);
+  range.setEndAfter(last);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+function unwrapTopicScripts(container) {
+  [...container.querySelectorAll("sup, sub")].reverse().forEach((element) => {
+    element.replaceWith(...element.childNodes);
+  });
+}
+
+function toggleTopicScript(command) {
+  if (!editingId) return;
+  const label = nodesLayer.querySelector(`[data-id="${editingId}"] .topic-label`);
+  if (!label) return;
+  label.focus({ preventScroll: true });
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return;
+  let range = selection.getRangeAt(0);
+  if (!label.contains(range.commonAncestorContainer)) return;
+  const tag = command === "superscript" ? "sup" : "sub";
+  const activeScript = closestTopicScript(selection.anchorNode, label);
+  let active = true;
+
+  if (activeScript?.tagName.toLowerCase() === tag) {
+    if (range.collapsed) {
+      range = document.createRange();
+      range.setStartAfter(activeScript);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } else {
+      selectUnwrappedTopicScript(activeScript, selection);
+    }
+    active = false;
+  } else {
+    if (activeScript) {
+      selectUnwrappedTopicScript(activeScript, selection);
+      range = selection.getRangeAt(0);
+    }
+    const formatted = document.createElement(tag);
+    if (range.collapsed) {
+      const marker = document.createTextNode("\u200b");
+      formatted.append(marker);
+      range.insertNode(formatted);
+      range.setStart(marker, marker.textContent.length);
+      range.collapse(true);
+    } else {
+      const contents = range.extractContents();
+      unwrapTopicScripts(contents);
+      formatted.append(contents);
+      range.insertNode(formatted);
+      range.selectNodeContents(formatted);
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  syncEditingText();
+  syncEditingNodeWidth();
+  drawConnections();
+  markSaving();
+  const labelText = command === "superscript" ? "上标" : "下标";
+  showStatus(active ? `已启用${labelText}` : `已关闭${labelText}`, 1200);
+}
+
 function finishEditing() {
   if (!editingId) return;
   const finishedId = editingId;
   syncEditingText();
   const node = getNode(editingId);
-  if (node.text !== editSnapshot) {
-    history.push(nodes.map((item) => item.id === node.id ? { ...item, text: editSnapshot } : { ...item }));
+  const previousText = editSnapshot?.text ?? node.text;
+  const previousRichText = editSnapshot?.richText;
+  if (node.text !== previousText || (node.richText || "") !== (previousRichText || "")) {
+    history.push(nodes.map((item) => item.id === node.id ? { ...item, text: previousText, richText: previousRichText } : { ...item }));
     future = [];
     updateHistoryButtons();
     markSaving();
@@ -1455,6 +1594,7 @@ function finishEditing() {
     syncDocumentTitleFromRoot();
   }
   editingId = null;
+  editSnapshot = null;
   hintText.textContent = "双击主题进行编辑";
   render();
   if (nodeImagePastePendingIds.has(finishedId)) {
@@ -1687,6 +1827,7 @@ function projectData() {
       id: node.id,
       parentId: node.parentId,
       text: node.text,
+      richText: typeof node.richText === "string" ? node.richText : undefined,
       side: node.side,
       color: node.color,
       collapsed: Boolean(node.collapsed),
@@ -3416,10 +3557,13 @@ function normalizeProject(data) {
       throw new Error("工程文件包含重复或无效的主题 ID");
     }
     ids.add(node.id);
+    const text = String(node.text || defaultTopicText(node)).slice(0, 500);
+    const richText = sanitizeTopicRichText(node.richText, text);
     return {
       id: node.id,
       parentId: node.parentId === null ? null : String(node.parentId),
-      text: String(node.text || defaultTopicText(node)).slice(0, 500),
+      text,
+      richText: richText || undefined,
       side: node.side === -1 ? -1 : node.side === 0 ? 0 : 1,
       color: /^#[0-9a-f]{6}$/i.test(node.color) ? node.color : "#ffffff",
       collapsed: Boolean(node.collapsed),
@@ -4320,7 +4464,7 @@ nodesLayer.addEventListener("dblclick", (event) => {
 
 nodesLayer.addEventListener("input", (event) => {
   if (!event.target.matches(".topic-label") || !editingId) return;
-  getNode(editingId).text = editableText(event.target);
+  syncEditingText();
   syncEditingNodeWidth();
   drawConnections();
   markSaving();
@@ -4343,7 +4487,19 @@ nodesLayer.addEventListener("keydown", (event) => {
   if (event.key === " " && !event.repeat) {
     editingSpaceHeld = true;
   }
-  if (command && key === "z") {
+  const superscriptShortcut = command && event.shiftKey && !event.altKey
+    && (event.key === "+" || event.code === "Equal" || event.code === "NumpadAdd");
+  const subscriptShortcut = command && event.shiftKey && !event.altKey
+    && (event.key === "-" || event.key === "_" || event.code === "Minus" || event.code === "NumpadSubtract");
+  if (superscriptShortcut) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleTopicScript("superscript");
+  } else if (subscriptShortcut) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleTopicScript("subscript");
+  } else if (command && key === "z") {
     event.preventDefault();
     event.stopPropagation();
     if (event.shiftKey) {
