@@ -150,6 +150,7 @@ let autosaveWorkspaceQueued = false;
 let workspaceRefreshTimer = null;
 let workspaceDragFilePath = "";
 let workspaceSelectedFileKey = "";
+let currentMapImageFolder = "";
 let mapReturnStack = [];
 let titleEditedByUser = false;
 let nodeLinkMenu = null;
@@ -1823,6 +1824,7 @@ function projectData() {
     format: "mindmap",
     version: 1,
     title: currentMapTitle(),
+    imageFolder: currentMapImageFolder || undefined,
     savedAt: new Date().toISOString(),
     view: {
       zoom,
@@ -1880,6 +1882,7 @@ function projectFingerprint(raw) {
     version: 1,
     localId: typeof raw?.localId === "string" ? raw.localId : "",
     title: data.title,
+    imageFolder: data.imageFolder,
     view: data.view,
     nodes: data.nodes,
   }));
@@ -2652,6 +2655,48 @@ function safeImageFileBaseName(value) {
     .slice(0, 56) || "image";
 }
 
+function normalizeWorkspaceImageFolder(value) {
+  const parts = String(value || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts.length || parts.length > 12) return "";
+  if (parts.some((part) => part === "." || part === ".." || part.length > 120 || /[<>:"|?*\x00-\x1f]/.test(part))) return "";
+  return parts.join("/").slice(0, 600);
+}
+
+function workspaceImageFolderFromSource(source) {
+  const value = String(source || "").trim().replace(/\\/g, "/");
+  if (!value || isInlineDocumentImageSource(value) || /^[a-z][a-z0-9+.-]*:/i.test(value)) return "";
+  const folder = normalizeWorkspaceImageFolder(workspacePathDirectory(value));
+  return /_pictures$/i.test(workspacePathFileName(folder)) ? folder : "";
+}
+
+function inferProjectImageFolder(data, projectNodes = []) {
+  const configured = normalizeWorkspaceImageFolder(data?.imageFolder);
+  if (configured) return configured;
+  const counts = new Map();
+  const countSource = (source) => {
+    const folder = workspaceImageFolderFromSource(source);
+    if (folder) counts.set(folder, (counts.get(folder) || 0) + 1);
+  };
+  projectNodes.forEach((node) => {
+    nodeImages(node).forEach((image) => countSource(image.src));
+    String(node.document || "").split(/\r?\n/).forEach((line) => countSource(parseMarkdownImageLine(line)?.src));
+  });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
+function defaultMapImageFolder() {
+  if (currentWorkspaceFileName) {
+    const directory = workspacePathDirectory(currentWorkspaceFileName);
+    const { base } = splitWorkspaceMapFileName(currentWorkspaceFileName);
+    return joinWorkspacePath(directory, `${safeFileBaseName(base)}_pictures`);
+  }
+  return `${safeFileBaseName(rootTopicTitle() || ROOT_TOPIC_TEXT)}_pictures`;
+}
+
 async function workspaceFileExists(directoryHandle, fileName) {
   try {
     await directoryHandle.getFileHandle(fileName);
@@ -2675,8 +2720,11 @@ async function saveDocumentImageFile(file) {
   if (!file?.type?.startsWith("image/")) throw new Error("NOT_IMAGE");
   if (!workspaceDirectoryHandle) throw new Error("NO_WORKSPACE");
   if (!await ensureWorkspacePermission("readwrite")) throw new Error("NO_WORKSPACE_PERMISSION");
-  const folderName = `${safeFileBaseName(rootTopicTitle() || ROOT_TOPIC_TEXT)}_pictures`;
-  const directory = await workspaceDirectoryHandle.getDirectoryHandle(folderName, { create: true });
+  if (!currentMapImageFolder) currentMapImageFolder = defaultMapImageFolder();
+  const folderPath = normalizeWorkspaceImageFolder(currentMapImageFolder);
+  if (!folderPath) throw new Error("INVALID_IMAGE_FOLDER");
+  currentMapImageFolder = folderPath;
+  const directory = await getWorkspaceDirectoryHandleByPath(folderPath, { create: true });
   const extension = imageExtensionForFile(file);
   const baseName = safeImageFileBaseName(file.name || `image-${Date.now()}`);
   const fileName = await uniqueWorkspaceImageFileName(directory, baseName, extension);
@@ -2684,7 +2732,7 @@ async function saveDocumentImageFile(file) {
   const writable = await handle.createWritable();
   await writable.write(file);
   await writable.close();
-  return `${folderName}/${fileName}`;
+  return `${folderPath}/${fileName}`;
 }
 
 async function insertDocumentImageFile(file) {
@@ -3704,6 +3752,7 @@ function normalizeProject(data) {
   const viewPanY = Number(data.view?.pan?.y);
   return {
     title: typeof data.title === "string" ? data.title.slice(0, 120) : DEFAULT_DOCUMENT_TITLE,
+    imageFolder: inferProjectImageFolder(data, normalizedNodes),
     nodes: normalizedNodes,
     view: {
       zoom: Number.isFinite(viewZoom) ? Math.min(1.6, Math.max(0.5, viewZoom)) : 1,
@@ -3727,6 +3776,7 @@ function applyProjectData(
   } = {}
 ) {
   nodes = data.nodes;
+  currentMapImageFolder = normalizeWorkspaceImageFolder(data.imageFolder);
   const validSelectedIds = selectedNodeIds.filter((id) => data.nodes.some((node) => node.id === id));
   selectedId = data.nodes.some((node) => node.id === selectedNodeId) ? selectedNodeId : validSelectedIds[0] || "root";
   selectedIds = new Set(validSelectedIds.length ? validSelectedIds : [selectedId]);
