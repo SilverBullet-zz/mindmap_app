@@ -4675,7 +4675,12 @@ document.addEventListener("keydown", async (event) => {
   if (!command) return;
   const key = event.key.toLowerCase();
   const editingText = editingId || event.target.matches("input, textarea, select, [contenteditable='true']");
-  if (!editingText && key === "f") {
+  if (key === "n" && !event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    await newLocalMap();
+  } else if (!editingText && key === "f") {
     event.preventDefault();
     focusSearchMode();
   } else if (!editingText && (key === "=" || key === "+" || key === "-")) {
