@@ -123,6 +123,7 @@ let future = [];
 let editSnapshot = null;
 let internalClipboard = null;
 let nodeDrag = null;
+let nodeImageDrag = null;
 let nodeResize = null;
 let suppressNextClick = false;
 let animatingNodeIds = new Set();
@@ -834,8 +835,11 @@ function render() {
       imageBadge.className = "node-image-badge";
       imageBadge.dataset.action = "view-node-image";
       imageBadge.dataset.id = node.id;
+      imageBadge.dataset.imageIndex = String(attachedImages.length - 1);
       imageBadge.dataset.imagePath = image.src;
-      imageBadge.title = attachedImages.length > 1 ? `查看图片（${attachedImages.length} 张）` : "查看图片";
+      imageBadge.title = attachedImages.length > 1
+        ? `查看图片（${attachedImages.length} 张）· 拖动可移动`
+        : "查看图片 · 拖动可移动";
       imageBadge.setAttribute("aria-label", imageBadge.title);
       const thumbnail = document.createElement("img");
       thumbnail.alt = image.name || "图片";
@@ -2738,6 +2742,45 @@ async function openNodeImage(nodeId) {
   await openImageViewer(image.src, image.name || node?.text || "");
 }
 
+function removeNodeImage(nodeId, imageIndex) {
+  const node = getNode(nodeId);
+  const images = nodeImages(node);
+  const index = clamp(Number(imageIndex), 0, Math.max(0, images.length - 1));
+  const image = images[index];
+  if (!node || !image) return false;
+  const confirmed = window.confirm(
+    `从“${node.text || defaultTopicText(node)}”移除图片“${image.name || "图片"}”吗？\n\n` +
+    "原始图片文件会保留在工作目录中；移除后可按 Ctrl+Z 撤销。"
+  );
+  if (!confirmed) return false;
+  pushHistory();
+  images.splice(index, 1);
+  node.images = images.length ? images : undefined;
+  nodeImagePastePendingIds.delete(node.id);
+  render();
+  showStatus("图片已从主题移除，可按 Ctrl+Z 撤销", 2400);
+  return true;
+}
+
+function moveNodeImage(sourceNodeId, imageIndex, targetNodeId) {
+  const source = getNode(sourceNodeId);
+  const target = getNode(targetNodeId);
+  if (!source || !target || source.id === target.id) return false;
+  const sourceImages = nodeImages(source);
+  const index = clamp(Number(imageIndex), 0, Math.max(0, sourceImages.length - 1));
+  const [image] = sourceImages.splice(index, 1);
+  if (!image) return false;
+  pushHistory();
+  source.images = sourceImages.length ? sourceImages : undefined;
+  target.images = [...nodeImages(target), image];
+  nodeImagePastePendingIds.delete(source.id);
+  selectedId = target.id;
+  selectedIds = new Set([target.id]);
+  render();
+  showStatus(`图片已移动到“${target.text || defaultTopicText(target)}”`, 2200);
+  return true;
+}
+
 function chooseNodeImage(nodeId = selectedId) {
   const node = getNode(nodeId);
   if (!node || !nodeImageInput) return;
@@ -3342,15 +3385,58 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
   menu.append(refresh);
 }
 
+function renderNodeImageMenu(nodeId, imageIndex) {
+  const menu = ensureNodeLinkMenu();
+  const node = getNode(nodeId);
+  const images = nodeImages(node);
+  const index = clamp(Number(imageIndex), 0, Math.max(0, images.length - 1));
+  const image = images[index];
+  menu.replaceChildren();
+  if (!node || !image) return false;
+
+  const title = document.createElement("div");
+  title.className = "node-link-menu-title";
+  title.textContent = image.name || "图片";
+  const view = document.createElement("button");
+  view.type = "button";
+  view.className = "node-link-menu-item";
+  view.dataset.action = "view-node-image";
+  view.dataset.nodeId = nodeId;
+  view.textContent = "查看原图";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "node-link-menu-item danger";
+  remove.dataset.action = "remove-node-image";
+  remove.dataset.nodeId = nodeId;
+  remove.dataset.imageIndex = String(index);
+  remove.textContent = "删除图片";
+  const hint = document.createElement("div");
+  hint.className = "node-link-menu-empty";
+  hint.textContent = "删除只移除当前主题中的图片链接，原始文件会保留。";
+  menu.append(title, view, remove, hint);
+  return true;
+}
+
+function positionNodeMenu(menu, x, y) {
+  const menuWidth = 260;
+  const menuHeight = Math.min(menu.scrollHeight || 220, window.innerHeight - 24);
+  menu.style.left = `${clamp(x, 12, window.innerWidth - menuWidth - 12)}px`;
+  menu.style.top = `${clamp(y, 12, window.innerHeight - menuHeight - 12)}px`;
+}
+
 async function showNodeLinkMenu(nodeId, x, y) {
   if (!workspaceFiles.length && workspaceDirectoryHandle) await refreshWorkspaceFiles();
   renderNodeLinkMenu(nodeId);
   const menu = ensureNodeLinkMenu();
   menu.hidden = false;
-  const menuWidth = 260;
-  const menuHeight = Math.min(menu.scrollHeight || 220, window.innerHeight - 24);
-  menu.style.left = `${clamp(x, 12, window.innerWidth - menuWidth - 12)}px`;
-  menu.style.top = `${clamp(y, 12, window.innerHeight - menuHeight - 12)}px`;
+  positionNodeMenu(menu, x, y);
+}
+
+function showNodeImageMenu(nodeId, imageIndex, x, y) {
+  const menu = ensureNodeLinkMenu();
+  if (!renderNodeImageMenu(nodeId, imageIndex)) return;
+  menu.hidden = false;
+  positionNodeMenu(menu, x, y);
 }
 
 function unlinkNodeMap(nodeId) {
@@ -4596,6 +4682,95 @@ function clearDragVisuals() {
   document.querySelector(".drag-ghost")?.remove();
 }
 
+function clearNodeImageDragVisuals() {
+  nodesLayer.querySelectorAll(".image-dragging, .image-drop-target").forEach((element) => {
+    element.classList.remove("image-dragging", "image-drop-target");
+  });
+  document.querySelector(".image-drag-ghost")?.remove();
+}
+
+function startNodeImageDrag(event, badge) {
+  const sourceNodeId = badge.dataset.id;
+  const source = getNode(sourceNodeId);
+  const imageIndex = Number(badge.dataset.imageIndex);
+  if (!source || !nodeImages(source)[imageIndex]) return;
+  event.preventDefault();
+  event.stopPropagation();
+  hideNodeLinkMenu();
+  nodeImageDrag = {
+    sourceNodeId,
+    imageIndex,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false,
+    targetId: null,
+  };
+  nodesLayer.setPointerCapture(event.pointerId);
+}
+
+function updateNodeImageDrag(event) {
+  if (!nodeImageDrag || nodeImageDrag.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const distance = Math.hypot(event.clientX - nodeImageDrag.startX, event.clientY - nodeImageDrag.startY);
+  if (!nodeImageDrag.active && distance < 6) return;
+
+  if (!nodeImageDrag.active) {
+    nodeImageDrag.active = true;
+    const badge = nodesLayer.querySelector(`.node-image-badge[data-id="${nodeImageDrag.sourceNodeId}"]`);
+    badge?.classList.add("image-dragging");
+    const ghost = document.createElement("div");
+    ghost.className = "image-drag-ghost";
+    const preview = badge?.querySelector("img");
+    if (preview?.src) {
+      const image = document.createElement("img");
+      image.src = preview.src;
+      image.alt = "";
+      ghost.append(image);
+    } else {
+      const placeholder = document.createElement("span");
+      placeholder.setAttribute("aria-hidden", "true");
+      ghost.append(placeholder);
+    }
+    document.body.append(ghost);
+    hintText.textContent = "拖到另一主题以移动图片 · Esc 取消";
+  }
+
+  const ghost = document.querySelector(".image-drag-ghost");
+  if (ghost) {
+    ghost.style.left = `${event.clientX}px`;
+    ghost.style.top = `${event.clientY}px`;
+  }
+  nodesLayer.querySelectorAll(".image-drop-target").forEach((element) => element.classList.remove("image-drop-target"));
+  const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest(".topic-node");
+  const targetId = targetElement?.dataset.id;
+  nodeImageDrag.targetId = targetId && targetId !== nodeImageDrag.sourceNodeId ? targetId : null;
+  if (nodeImageDrag.targetId) {
+    targetElement.classList.add("image-drop-target");
+    const target = getNode(nodeImageDrag.targetId);
+    hintText.textContent = `将图片移动到“${target?.text || defaultTopicText(target)}”`;
+  }
+}
+
+function finishNodeImageDrag(event, cancelled = false) {
+  if (!nodeImageDrag || (event && nodeImageDrag.pointerId !== event.pointerId)) return;
+  const dragState = nodeImageDrag;
+  nodeImageDrag = null;
+  if (nodesLayer.hasPointerCapture(dragState.pointerId)) {
+    nodesLayer.releasePointerCapture(dragState.pointerId);
+  }
+  clearNodeImageDragVisuals();
+  hintText.textContent = "双击主题进行编辑";
+  if (!dragState.active) return;
+  suppressNextClick = true;
+  window.setTimeout(() => {
+    suppressNextClick = false;
+  }, 0);
+  if (cancelled || !dragState.targetId) return;
+  moveNodeImage(dragState.sourceNodeId, dragState.imageIndex, dragState.targetId);
+}
+
 function setNodeWidth(node, nextWidth) {
   const limits = nodeWidthLimits(node);
   node.width = clamp(Math.round(nextWidth), limits.min, limits.max);
@@ -4656,7 +4831,11 @@ function finishNodeResize(event, cancelled = false) {
 }
 
 nodesLayer.addEventListener("pointerdown", (event) => {
-  if (event.target.closest(".node-image-badge")) return;
+  const imageBadge = event.target.closest(".node-image-badge");
+  if (imageBadge) {
+    if (!editingId && event.button === 0) startNodeImageDrag(event, imageBadge);
+    return;
+  }
   const resizeHandle = event.target.closest(".resize-handle");
   if (resizeHandle && !editingId && event.button === 0) {
     startNodeResize(event, resizeHandle);
@@ -4683,6 +4862,10 @@ nodesLayer.addEventListener("pointerdown", (event) => {
     insertPosition: null,
   };
   nodesLayer.setPointerCapture(event.pointerId);
+});
+
+nodesLayer.addEventListener("pointermove", (event) => {
+  if (nodeImageDrag) updateNodeImageDrag(event);
 });
 
 nodesLayer.addEventListener("pointermove", (event) => {
@@ -4788,6 +4971,8 @@ function finishNodeDrag(event, cancelled = false) {
   showStatus(`已将 ${draggedNodes.length} 个主题移到“${targetNode.text}”下`);
 }
 
+nodesLayer.addEventListener("pointerup", (event) => finishNodeImageDrag(event));
+nodesLayer.addEventListener("pointercancel", (event) => finishNodeImageDrag(event, true));
 nodesLayer.addEventListener("pointerup", (event) => finishNodeDrag(event));
 nodesLayer.addEventListener("pointercancel", (event) => finishNodeDrag(event, true));
 nodesLayer.addEventListener("pointerup", (event) => finishNodeResize(event));
@@ -4825,6 +5010,11 @@ document.addEventListener("keydown", async (event) => {
     event.preventDefault();
     event.stopPropagation();
     openWorkspacePanel();
+    return;
+  }
+  if (event.key === "Escape" && nodeImageDrag) {
+    event.preventDefault();
+    finishNodeImageDrag(null, true);
     return;
   }
   if (event.key === "Escape" && nodeDrag) {
@@ -5014,6 +5204,12 @@ document.addEventListener("click", async (event) => {
     setSelection([nodeId], nodeId);
     hideNodeLinkMenu();
     chooseNodeImage(nodeId);
+  } else if (item.dataset.action === "view-node-image") {
+    hideNodeLinkMenu();
+    await openNodeImage(nodeId);
+  } else if (item.dataset.action === "remove-node-image") {
+    hideNodeLinkMenu();
+    removeNodeImage(nodeId, Number(item.dataset.imageIndex));
   } else if (item.dataset.action === "open-document") {
     hideNodeLinkMenu();
     openNodeDocument(nodeId);
@@ -5503,7 +5699,15 @@ function startCanvasPan(event) {
 viewport.addEventListener("pointerdown", (event) => {
   if (event.pointerType === "touch" && startTouchGesture(event)) return;
   if (event.target.closest(".map-return-button")) return;
+  const imageBadge = event.target.closest(".node-image-badge");
   const topic = event.target.closest(".topic-node");
+  if (event.button === 2 && imageBadge) {
+    event.preventDefault();
+    event.stopPropagation();
+    selectNode(imageBadge.dataset.id);
+    showNodeImageMenu(imageBadge.dataset.id, Number(imageBadge.dataset.imageIndex), event.clientX, event.clientY);
+    return;
+  }
   if (event.button === 2 && event.shiftKey && topic) {
     event.preventDefault();
     event.stopPropagation();
@@ -5603,6 +5807,11 @@ viewport.addEventListener("mousedown", (event) => {
   event.stopPropagation();
 }, true);
 viewport.addEventListener("contextmenu", (event) => {
+  if (event.target.closest(".node-image-badge")) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   const topic = event.target.closest(".topic-node");
   if (event.shiftKey && topic) {
     event.preventDefault();
