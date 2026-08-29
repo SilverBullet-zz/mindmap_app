@@ -1056,6 +1056,10 @@ textarea:focus-visible {
   padding: 2px 2px 2px 0;
 }
 
+.workspace-file-list:focus {
+  outline: none;
+}
+
 .workspace-file-list.drop-root {
   outline: 2px dashed #79cdb7;
   outline-offset: 3px;
@@ -1151,6 +1155,12 @@ textarea:focus-visible {
   box-shadow: inset 3px 0 0 rgba(74, 155, 134, 0.78);
 }
 
+.workspace-tree-row.file.keyboard-selected {
+  border-color: rgba(69, 161, 139, 0.92);
+  background: rgba(229, 248, 240, 0.94);
+  box-shadow: inset 3px 0 0 #479c86, 0 0 0 2px rgba(96, 190, 165, 0.12);
+}
+
 .workspace-tree-row.file.dragging {
   opacity: 0.58;
 }
@@ -1230,20 +1240,6 @@ textarea:focus-visible {
 .workspace-file-action:hover {
   color: #246d5b;
   background: rgba(218, 244, 235, 0.9);
-}
-
-.workspace-file-action.danger {
-  color: #b9666d;
-}
-
-.workspace-file-action.danger:hover {
-  color: #a83f49;
-  background: rgba(255, 232, 235, 0.9);
-}
-
-.workspace-file-action .trash-icon {
-  margin-top: 1px;
-  transform: scale(0.72);
 }
 
 .workspace-open-icon {

@@ -12,7 +12,7 @@
     <title>枝图 - 思维导图</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=50" />
+    <link rel="stylesheet" href="./styles.css?v=51" />
   </head>
   <body>
     <div class="app-shell">
@@ -138,7 +138,7 @@
                 </div>
                 <button class="text-button" id="refresh-workspace-files" type="button" title="刷新文件列表">刷新</button>
               </div>
-              <div class="workspace-file-list" id="workspace-file-list"></div>
+              <div class="workspace-file-list" id="workspace-file-list" tabindex="0" aria-label="工作目录文件列表"></div>
             </div>
           </div>
           <div class="workspace-resizer" id="workspace-resizer" role="separator" aria-orientation="vertical" aria-label="调整工作目录栏宽度"></div>
@@ -257,6 +257,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=75"></script>
+    <script src="./app.js?v=76"></script>
   </body>
 </html>

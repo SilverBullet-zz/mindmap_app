@@ -149,6 +149,7 @@ let autosaveWorkspacePromise = null;
 let autosaveWorkspaceQueued = false;
 let workspaceRefreshTimer = null;
 let workspaceDragFilePath = "";
+let workspaceSelectedFileKey = "";
 let mapReturnStack = [];
 let titleEditedByUser = false;
 let nodeLinkMenu = null;
@@ -2108,10 +2109,10 @@ function updateWorkspaceStatusText({ supported = supportsWorkspaceDirectoryAcces
   workspaceFolderStatus.title = workspaceFolderStatus.textContent;
 }
 
-function createWorkspaceFileAction(action, label, iconClass, { danger = false } = {}) {
+function createWorkspaceFileAction(action, label, iconClass) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `workspace-file-action${danger ? " danger" : ""}`;
+  button.className = "workspace-file-action";
   button.dataset.action = action;
   button.title = label;
   button.setAttribute("aria-label", label);
@@ -2154,6 +2155,7 @@ function setWorkspaceCollapsed(collapsed, { persist = true } = {}) {
 function openWorkspacePanel() {
   setWorkspaceCollapsed(false);
   renderWorkspaceFiles();
+  window.requestAnimationFrame(() => focusWorkspaceFileList());
   showStatus("已打开工作目录面板", 1200);
 }
 
@@ -2284,8 +2286,13 @@ function renderWorkspaceFiles() {
       const item = document.createElement("div");
       item.className = `workspace-tree-row file${isCurrent ? " current" : ""}`;
       item.dataset.name = entry.path;
+      item.dataset.workspaceKind = "workspace";
+      item.dataset.workspaceKey = `workspace:${entry.path}`;
       item.draggable = true;
       item.style.setProperty("--tree-depth", depth);
+      const isSelected = item.dataset.workspaceKey === workspaceSelectedFileKey;
+      item.classList.toggle("keyboard-selected", isSelected);
+      item.setAttribute("aria-selected", String(isSelected));
 
       const name = document.createElement("button");
       name.type = "button";
@@ -2304,8 +2311,7 @@ function renderWorkspaceFiles() {
       }
       const displayName = workspaceEntryDisplayName(entry);
       const open = createWorkspaceFileAction("open", `打开 ${displayName}`, "workspace-open-icon");
-      const remove = createWorkspaceFileAction("delete", `删除 ${displayName}`, "trash-icon", { danger: true });
-      actions.append(open, remove);
+      actions.append(open);
       item.append(name, actions);
       workspaceFileList.append(item);
     });
@@ -2452,7 +2458,12 @@ function renderBrowserLocalWorkspaceFiles() {
     const isCurrent = entry.id === currentLocalId;
     item.className = `workspace-tree-row file local${isCurrent ? " current" : ""}`;
     item.dataset.localId = entry.id;
+    item.dataset.workspaceKind = "local";
+    item.dataset.workspaceKey = `local:${entry.id}`;
     item.style.setProperty("--tree-depth", 0);
+    const isSelected = item.dataset.workspaceKey === workspaceSelectedFileKey;
+    item.classList.toggle("keyboard-selected", isSelected);
+    item.setAttribute("aria-selected", String(isSelected));
 
     const name = document.createElement("button");
     name.type = "button";
@@ -2471,8 +2482,7 @@ function renderBrowserLocalWorkspaceFiles() {
     }
     const displayName = entry.title || DEFAULT_DOCUMENT_TITLE;
     const open = createWorkspaceFileAction("open-local-workspace", `打开 ${displayName}`, "workspace-open-icon");
-    const remove = createWorkspaceFileAction("delete-local-workspace", `删除 ${displayName}`, "trash-icon", { danger: true });
-    actions.append(open, remove);
+    actions.append(open);
     item.append(name, actions);
     workspaceFileList.append(item);
   });
@@ -5109,6 +5119,105 @@ function workspaceDropTargetFolder(event) {
   return event.target.closest("[data-drop-folder]")?.dataset.dropFolder || "";
 }
 
+function workspaceFileRows() {
+  return [...workspaceFileList.querySelectorAll(".workspace-tree-row.file")];
+}
+
+function selectWorkspaceFileRow(row, { focus = true } = {}) {
+  if (!row) return null;
+  workspaceSelectedFileKey = row.dataset.workspaceKey || "";
+  workspaceFileRows().forEach((item) => {
+    const selected = item === row;
+    item.classList.toggle("keyboard-selected", selected);
+    item.setAttribute("aria-selected", String(selected));
+  });
+  if (focus) workspaceFileList.focus({ preventScroll: true });
+  row.scrollIntoView({ block: "nearest" });
+  return row;
+}
+
+function focusWorkspaceFileList() {
+  const rows = workspaceFileRows();
+  if (!rows.length) {
+    workspaceFileList.focus({ preventScroll: true });
+    return;
+  }
+  const selected = rows.find((row) => row.dataset.workspaceKey === workspaceSelectedFileKey);
+  selectWorkspaceFileRow(selected || rows.find((row) => row.classList.contains("current")) || rows[0]);
+}
+
+async function openWorkspaceFileRow(row) {
+  if (!row) return;
+  selectWorkspaceFileRow(row);
+  hideNodeLinkMenu();
+  if (row.dataset.workspaceKind === "local") {
+    await autosaveLocal();
+    openLocalMap(row.dataset.localId);
+    return;
+  }
+  mapReturnStack = [];
+  await openWorkspaceMapFile(row.dataset.name);
+}
+
+function showWorkspaceFileMenu(row, x, y) {
+  const menu = ensureNodeLinkMenu();
+  const displayName = row.querySelector(".workspace-file-name")?.textContent?.trim() || "思维导图";
+  const kind = row.dataset.workspaceKind || "workspace";
+  const value = kind === "local" ? row.dataset.localId : row.dataset.name;
+  menu.replaceChildren();
+
+  const title = document.createElement("div");
+  title.className = "node-link-menu-title";
+  title.textContent = displayName;
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "node-link-menu-item";
+  open.dataset.action = "open-workspace-context";
+  open.dataset.workspaceKind = kind;
+  open.dataset.workspaceValue = value;
+  open.textContent = "打开";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "node-link-menu-item danger";
+  remove.dataset.action = "delete-workspace-context";
+  remove.dataset.workspaceKind = kind;
+  remove.dataset.workspaceValue = value;
+  remove.textContent = "移到垃圾桶";
+  const hint = document.createElement("div");
+  hint.className = "node-link-menu-empty";
+  hint.textContent = "删除前会再次确认，可从垃圾桶恢复。";
+  menu.append(title, open, remove, hint);
+  menu.hidden = false;
+  positionNodeMenu(menu, x, y);
+}
+
+workspaceFileList.addEventListener("keydown", async (event) => {
+  if (!["ArrowUp", "ArrowDown", "Enter"].includes(event.key)) return;
+  const rows = workspaceFileRows();
+  if (!rows.length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const selected = rows.find((row) => row.dataset.workspaceKey === workspaceSelectedFileKey);
+  if (event.key === "Enter") {
+    if (!event.repeat) await openWorkspaceFileRow(selected || rows.find((row) => row.classList.contains("current")) || rows[0]);
+    return;
+  }
+  const currentIndex = rows.indexOf(selected);
+  const nextIndex = currentIndex < 0
+    ? (event.key === "ArrowDown" ? 0 : rows.length - 1)
+    : clamp(currentIndex + (event.key === "ArrowDown" ? 1 : -1), 0, rows.length - 1);
+  selectWorkspaceFileRow(rows[nextIndex]);
+});
+
+workspaceFileList.addEventListener("contextmenu", (event) => {
+  const row = event.target.closest(".workspace-tree-row.file");
+  if (!row) return;
+  event.preventDefault();
+  event.stopPropagation();
+  selectWorkspaceFileRow(row);
+  showWorkspaceFileMenu(row, event.clientX, event.clientY);
+});
+
 workspaceFileList.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "choose-workspace-folder") {
@@ -5123,14 +5232,11 @@ workspaceFileList.addEventListener("click", (event) => {
     refreshWorkspaceFiles();
     return;
   }
+  const item = event.target.closest(".workspace-tree-row.file");
+  if (item) selectWorkspaceFileRow(item, { focus: false });
   const localItem = event.target.closest(".workspace-tree-row.local");
-  if (localItem && (action === "open-local-workspace" || action === "delete-local-workspace")) {
-    const id = localItem.dataset.localId;
-    if (action === "open-local-workspace") {
-      autosaveLocal().then(() => openLocalMap(id));
-    } else {
-      deleteLocalMap(id);
-    }
+  if (localItem && action === "open-local-workspace") {
+    openWorkspaceFileRow(localItem);
     return;
   }
   const folder = event.target.closest("[data-action='toggle-folder']");
@@ -5141,13 +5247,9 @@ workspaceFileList.addEventListener("click", (event) => {
     renderWorkspaceFiles();
     return;
   }
-  const item = event.target.closest(".workspace-tree-row.file");
   if (!action || !item) return;
   if (action === "open") {
-    mapReturnStack = [];
-    openWorkspaceMapFile(item.dataset.name);
-  } else if (action === "delete") {
-    deleteWorkspaceMapFile(item.dataset.name);
+    openWorkspaceFileRow(item);
   }
 });
 workspaceFileList.addEventListener("dragstart", (event) => {
@@ -5210,6 +5312,20 @@ document.addEventListener("click", async (event) => {
   } else if (item.dataset.action === "remove-node-image") {
     hideNodeLinkMenu();
     removeNodeImage(nodeId, Number(item.dataset.imageIndex));
+  } else if (item.dataset.action === "open-workspace-context") {
+    const row = workspaceFileRows().find((candidate) => {
+      const value = item.dataset.workspaceKind === "local" ? candidate.dataset.localId : candidate.dataset.name;
+      return candidate.dataset.workspaceKind === item.dataset.workspaceKind && value === item.dataset.workspaceValue;
+    });
+    hideNodeLinkMenu();
+    await openWorkspaceFileRow(row);
+  } else if (item.dataset.action === "delete-workspace-context") {
+    hideNodeLinkMenu();
+    if (item.dataset.workspaceKind === "local") {
+      deleteLocalMap(item.dataset.workspaceValue);
+    } else {
+      await deleteWorkspaceMapFile(item.dataset.workspaceValue);
+    }
   } else if (item.dataset.action === "open-document") {
     hideNodeLinkMenu();
     openNodeDocument(nodeId);
@@ -5243,7 +5359,9 @@ mapReturnButton.addEventListener("click", () => {
   });
 });
 workspaceCollapseButton.addEventListener("click", () => {
-  setWorkspaceCollapsed(!workspaceSidebar.classList.contains("collapsed"));
+  const collapse = !workspaceSidebar.classList.contains("collapsed");
+  setWorkspaceCollapsed(collapse);
+  if (!collapse) window.requestAnimationFrame(() => focusWorkspaceFileList());
 });
 workspaceResizer.addEventListener("pointerdown", (event) => {
   if (workspaceSidebar.classList.contains("collapsed")) return;
