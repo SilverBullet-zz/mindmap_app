@@ -1843,6 +1843,7 @@ function runtimeSourceState() {
 function setWorkspaceCapability(label, value, tone = "ok") {
   const item = document.createElement("span");
   item.className = `workspace-capability ${tone}`;
+  item.title = `${label}：${value}`;
   const labelElement = document.createElement("b");
   labelElement.textContent = label;
   const valueElement = document.createElement("span");
@@ -1886,27 +1887,29 @@ function workspaceSaveSourceText() {
   if (workspaceDirectoryHandle) {
     const fileLabel = workspaceCurrentFileLabel();
     return fileLabel
-      ? `自动保存到 Working Folder：${workspaceDirectoryHandle.name} / ${fileLabel}`
-      : `自动保存到 Working Folder：${workspaceDirectoryHandle.name}`;
+      ? `保存到：${workspaceDirectoryHandle.name} / ${fileLabel}`
+      : `保存到：${workspaceDirectoryHandle.name}`;
   }
   if (!localStorageAvailable()) {
-    return "当前不能自动保存；请用导出保存 .mindmap.json 文件。";
+    return "未启用自动保存，请导出 .mindmap.json";
   }
   if (runtime.label === "文件直开") {
-    return "当前自动保存到 file:// 这套浏览器本地状态；建议改用本地服务器打开。";
+    return "保存到：当前 file:// 浏览器本地（建议使用本地服务器）";
   }
-  return "当前自动保存到浏览器本地；选择 Working Folder 后会改为文件夹保存。";
+  return "保存到：浏览器本地（选择文件夹可改为文件夹保存）";
 }
 
 function updateWorkspaceSourceNote() {
   if (!workspaceSourceNote) return;
   workspaceSourceNote.textContent = workspaceSaveSourceText();
+  workspaceSourceNote.title = workspaceSourceNote.textContent;
 }
 
 function updateWorkspaceUi() {
   const savedName = localStorageAvailable() ? localStorage.getItem(WORKSPACE_NAME_KEY) : "";
   const supported = supportsWorkspaceDirectoryAccess();
   workspaceFolderName.textContent = workspaceDirectoryHandle?.name || savedName || (supported ? "未选择文件夹" : "浏览器本地");
+  workspaceFolderName.title = workspaceFolderName.textContent;
   updateWorkspaceStatusText({ supported });
   updateWorkspaceCapabilities();
   updateWorkspaceSourceNote();
@@ -1940,20 +1943,38 @@ function workspaceCurrentFileLabel() {
 function updateWorkspaceStatusText({ supported = supportsWorkspaceDirectoryAccess() } = {}) {
   if (!workspaceFolderStatus) return;
   const runtime = runtimeSourceState();
+  if (workspaceDirectoryHandle) {
+    const currentFile = workspaceCurrentFileLabel();
+    workspaceFolderStatus.textContent = currentFile ? `当前：${currentFile}` : "打开与保存使用此文件夹";
+    workspaceFolderStatus.title = workspaceFolderStatus.textContent;
+    return;
+  }
   if (runtime.detail) {
     workspaceFolderStatus.textContent = runtime.detail;
+    workspaceFolderStatus.title = runtime.detail;
     return;
   }
   if (!supported) {
     workspaceFolderStatus.textContent = "此设备不支持文件夹授权，使用浏览器本地与导入/导出";
+    workspaceFolderStatus.title = workspaceFolderStatus.textContent;
     return;
   }
-  if (!workspaceDirectoryHandle) {
-    workspaceFolderStatus.textContent = "选择文件夹后，打开/保存/链接都会使用同一位置";
-    return;
-  }
-  const currentFile = workspaceCurrentFileLabel();
-  workspaceFolderStatus.textContent = currentFile ? `当前：${currentFile}` : "打开/保存默认使用此位置";
+  workspaceFolderStatus.textContent = "选择文件夹后，打开与保存使用同一位置";
+  workspaceFolderStatus.title = workspaceFolderStatus.textContent;
+}
+
+function createWorkspaceFileAction(action, label, iconClass, { danger = false } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `workspace-file-action${danger ? " danger" : ""}`;
+  button.dataset.action = action;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  const icon = document.createElement("span");
+  icon.className = iconClass;
+  icon.setAttribute("aria-hidden", "true");
+  button.append(icon);
+  return button;
 }
 
 function renderWorkspaceEmptyState(title, detail, { actionText = "", action = "" } = {}) {
@@ -2136,16 +2157,9 @@ function renderWorkspaceFiles() {
         current.textContent = "当前";
         actions.append(current);
       }
-      const open = document.createElement("button");
-      open.type = "button";
-      open.className = "text-button";
-      open.dataset.action = "open";
-      open.textContent = "打开";
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "text-button danger";
-      remove.dataset.action = "delete";
-      remove.textContent = "删除";
+      const displayName = workspaceEntryDisplayName(entry);
+      const open = createWorkspaceFileAction("open", `打开 ${displayName}`, "workspace-open-icon");
+      const remove = createWorkspaceFileAction("delete", `删除 ${displayName}`, "trash-icon", { danger: true });
       actions.append(open, remove);
       item.append(name, actions);
       workspaceFileList.append(item);
@@ -2295,9 +2309,12 @@ function renderBrowserLocalWorkspaceFiles() {
     item.dataset.localId = entry.id;
     item.style.setProperty("--tree-depth", 0);
 
-    const name = document.createElement("span");
+    const name = document.createElement("button");
+    name.type = "button";
     name.className = "workspace-file-name";
+    name.dataset.action = "open-local-workspace";
     name.textContent = entry.title || DEFAULT_DOCUMENT_TITLE;
+    name.title = name.textContent;
 
     const actions = document.createElement("span");
     actions.className = "workspace-file-actions";
@@ -2307,16 +2324,9 @@ function renderBrowserLocalWorkspaceFiles() {
       current.textContent = "当前";
       actions.append(current);
     }
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "text-button";
-    open.dataset.action = "open-local-workspace";
-    open.textContent = "打开";
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.dataset.action = "delete-local-workspace";
-    remove.className = "text-button danger";
-    remove.textContent = "删除";
+    const displayName = entry.title || DEFAULT_DOCUMENT_TITLE;
+    const open = createWorkspaceFileAction("open-local-workspace", `打开 ${displayName}`, "workspace-open-icon");
+    const remove = createWorkspaceFileAction("delete-local-workspace", `删除 ${displayName}`, "trash-icon", { danger: true });
     actions.append(open, remove);
     item.append(name, actions);
     workspaceFileList.append(item);

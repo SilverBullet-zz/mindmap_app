@@ -729,8 +729,12 @@ textarea:focus-visible {
 
 .workspace-sidebar-content {
   display: grid;
-  gap: 12px;
-  padding: 14px 12px;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
+  gap: 8px;
+  height: 100%;
+  padding: 12px 10px 10px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .workspace-sidebar.collapsed .workspace-sidebar-content,
@@ -783,17 +787,9 @@ textarea:focus-visible {
   gap: 10px;
 }
 
-.workspace-kicker {
-  color: #6f8078;
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .workspace-sidebar-header strong {
   color: #24312b;
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .workspace-mode-pill {
@@ -828,15 +824,14 @@ textarea:focus-visible {
 
 .workspace-folder-card {
   display: grid;
-  grid-template-columns: 26px 1fr;
+  grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
-  gap: 11px;
+  gap: 9px;
   min-width: 0;
-  padding: 11px;
+  padding: 8px 9px;
   border: 1px solid rgba(196, 225, 214, 0.86);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.74);
-  box-shadow: 0 10px 28px rgba(67, 119, 101, 0.08);
 }
 
 .workspace-sidebar.local-fallback .workspace-folder-card {
@@ -851,6 +846,7 @@ textarea:focus-visible {
 
 .workspace-folder-icon {
   color: #3f8174;
+  transform: scale(0.86);
 }
 
 .workspace-sidebar.unconfigured .workspace-folder-icon {
@@ -881,23 +877,66 @@ textarea:focus-visible {
 }
 
 .workspace-folder-card small {
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
+}
+
+.workspace-diagnostics {
+  min-width: 0;
+  border-top: 1px solid rgba(190, 219, 208, 0.58);
+  border-bottom: 1px solid rgba(190, 219, 208, 0.58);
+}
+
+.workspace-diagnostics summary {
+  position: relative;
+  min-height: 28px;
+  padding: 6px 22px 6px 4px;
+  color: #5b7067;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.workspace-diagnostics summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-diagnostics summary::after {
+  position: absolute;
+  right: 6px;
+  top: 9px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid #789087;
+  border-bottom: 1.5px solid #789087;
+  content: "";
+  transform: rotate(45deg);
+  transition: transform var(--motion-fast);
+}
+
+.workspace-diagnostics[open] summary::after {
+  top: 12px;
+  transform: rotate(225deg);
 }
 
 .workspace-capabilities {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 4px;
+  padding: 0 0 7px;
 }
 
 .workspace-capability {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
   min-width: 0;
-  min-height: 42px;
-  padding: 6px 8px;
+  min-height: 26px;
+  padding: 4px 6px;
   border: 1px solid rgba(194, 224, 212, 0.78);
   border-radius: 7px;
   color: #49645a;
@@ -907,7 +946,7 @@ textarea:focus-visible {
 
 .workspace-capability b {
   color: #33483f;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
   line-height: 1.1;
 }
@@ -915,7 +954,7 @@ textarea:focus-visible {
 .workspace-capability span {
   overflow: hidden;
   color: #5f776d;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 760;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -938,29 +977,33 @@ textarea:focus-visible {
 }
 
 .workspace-source-note {
-  padding: 8px 10px;
-  border: 1px solid rgba(181, 220, 207, 0.72);
-  border-radius: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
   color: #46665b;
-  background: rgba(245, 253, 249, 0.72);
-  font-size: 11px;
+  background: rgba(235, 248, 242, 0.72);
+  font-size: 10px;
   font-weight: 720;
-  line-height: 1.45;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-sidebar-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
 }
 
 .workspace-sidebar-actions .secondary-button {
   width: 100%;
-  min-height: 34px;
+  min-height: 31px;
   border-color: rgba(139, 202, 185, 0.62);
   background: rgba(255, 255, 255, 0.72);
   color: #315d52;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -972,8 +1015,10 @@ textarea:focus-visible {
 
 .workspace-file-section {
   display: grid;
-  gap: 8px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 5px;
   min-width: 0;
+  min-height: 0;
 }
 
 .workspace-file-header {
@@ -1002,9 +1047,10 @@ textarea:focus-visible {
 
 .workspace-file-list {
   display: grid;
+  align-content: start;
   gap: 3px;
   min-width: 0;
-  max-height: min(42vh, 360px);
+  max-height: none;
   min-height: 42px;
   overflow: auto;
   padding: 2px 2px 2px 0;
@@ -1049,10 +1095,10 @@ textarea:focus-visible {
   --tree-depth: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
-  min-height: 34px;
-  padding: 5px 6px 5px calc(8px + var(--tree-depth) * 18px);
+  min-height: 32px;
+  padding: 4px 5px 4px calc(6px + var(--tree-depth) * 16px);
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
@@ -1146,7 +1192,7 @@ textarea:focus-visible {
 }
 
 .workspace-current-badge {
-  padding: 2px 6px;
+  padding: 1px 5px;
   border: 1px solid rgba(112, 194, 174, 0.72);
   border-radius: 999px;
   color: #357565;
@@ -1159,13 +1205,77 @@ textarea:focus-visible {
 .workspace-file-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
 }
 
-.workspace-file-actions .text-button,
 .workspace-file-header .text-button {
   padding: 0;
   font-size: 11px;
+}
+
+.workspace-file-action {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #52756a;
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.workspace-file-action:hover {
+  color: #246d5b;
+  background: rgba(218, 244, 235, 0.9);
+}
+
+.workspace-file-action.danger {
+  color: #b9666d;
+}
+
+.workspace-file-action.danger:hover {
+  color: #a83f49;
+  background: rgba(255, 232, 235, 0.9);
+}
+
+.workspace-file-action .trash-icon {
+  margin-top: 1px;
+  transform: scale(0.72);
+}
+
+.workspace-open-icon {
+  position: relative;
+  width: 13px;
+  height: 11px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.workspace-open-icon::before {
+  position: absolute;
+  right: -2px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  content: "";
+}
+
+.workspace-open-icon::after {
+  position: absolute;
+  right: -1px;
+  top: 1px;
+  width: 8px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transform-origin: right center;
 }
 
 .workspace-resizer {

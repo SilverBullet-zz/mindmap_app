@@ -12,7 +12,7 @@
     <title>枝图 - 思维导图</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=47" />
+    <link rel="stylesheet" href="./styles.css?v=48" />
   </head>
   <body>
     <div class="app-shell">
@@ -111,10 +111,7 @@
           <button class="workspace-collapse" id="workspace-collapse" type="button" title="收起工作目录" aria-label="收起工作目录"></button>
           <div class="workspace-sidebar-content">
             <div class="workspace-sidebar-header">
-              <div>
-                <span class="workspace-kicker">Workspace</span>
-                <strong>工作目录</strong>
-              </div>
+              <strong>工作目录</strong>
               <span class="workspace-mode-pill" id="workspace-mode-label">未设置</span>
             </div>
             <div class="workspace-folder-card">
@@ -124,12 +121,15 @@
                 <small id="workspace-folder-status">保存和打开会先使用这里</small>
               </div>
             </div>
-            <div class="workspace-capabilities" id="workspace-capabilities" aria-label="设备兼容状态"></div>
             <div class="workspace-source-note" id="workspace-source-note"></div>
             <div class="workspace-sidebar-actions">
               <button class="secondary-button" id="choose-workspace-folder" type="button">选择文件夹</button>
               <button class="secondary-button" id="open-workspace-file" type="button">打开文件</button>
             </div>
+            <details class="workspace-diagnostics">
+              <summary>环境状态</summary>
+              <div class="workspace-capabilities" id="workspace-capabilities" aria-label="设备兼容状态"></div>
+            </details>
             <div class="workspace-file-section">
               <div class="workspace-file-header">
                 <div>
@@ -257,6 +257,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=72"></script>
+    <script src="./app.js?v=73"></script>
   </body>
 </html>
