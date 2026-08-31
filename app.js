@@ -2335,7 +2335,8 @@ function renderWorkspaceFiles() {
     return;
   }
   updateWorkspaceFileCount(workspaceFiles.length);
-  if (!workspaceTree.length) {
+  const visibleWorkspaceTree = workspaceTree.filter((entry) => hasLinkableWorkspaceFile(entry));
+  if (!visibleWorkspaceTree.length) {
     renderWorkspaceEmptyState(
       "没有 mindmap 文件",
       "当前文件夹中暂时没有 .mindmap.json。编辑当前画布后会自动保存到这里。",
@@ -2347,6 +2348,7 @@ function renderWorkspaceFiles() {
   const renderEntries = (entries, depth = 0) => {
     entries.forEach((entry) => {
       if (entry.kind === "directory") {
+        if (!hasLinkableWorkspaceFile(entry)) return;
         const row = document.createElement("button");
         row.type = "button";
         row.className = "workspace-tree-row folder";
@@ -2402,7 +2404,7 @@ function renderWorkspaceFiles() {
     });
   };
 
-  renderEntries(workspaceTree);
+  renderEntries(visibleWorkspaceTree);
 }
 
 async function refreshWorkspaceFiles() {
