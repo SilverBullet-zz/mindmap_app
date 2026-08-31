@@ -2844,7 +2844,12 @@ async function openNodeImage(nodeId) {
   const node = getNode(nodeId);
   const image = latestNodeImage(node);
   if (!image) return;
-  await openImageViewer(image.src, image.name || node?.text || "");
+  try {
+    await openImageViewer(image.src, image.name || node?.text || "");
+  } catch (error) {
+    console.error(error);
+    showStatus("图片文件无法读取", 2200);
+  }
 }
 
 function removeNodeImage(nodeId, imageIndex) {
@@ -4869,7 +4874,15 @@ function finishNodeImageDrag(event, cancelled = false) {
   }
   clearNodeImageDragVisuals();
   hintText.textContent = "双击主题进行编辑";
-  if (!dragState.active) return;
+  if (!dragState.active) {
+    if (cancelled) return;
+    suppressNextClick = true;
+    window.setTimeout(() => {
+      suppressNextClick = false;
+    }, 0);
+    void openNodeImage(dragState.sourceNodeId);
+    return;
+  }
   suppressNextClick = true;
   window.setTimeout(() => {
     suppressNextClick = false;
