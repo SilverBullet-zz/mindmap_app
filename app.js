@@ -1693,6 +1693,40 @@ function addChild(parentId = selectedId, startEditing = true) {
   if (startEditing) beginEditing(id, true);
 }
 
+function addParent(childId = selectedId, startEditing = true) {
+  if (editingId) syncEditingText();
+  const child = getNode(childId);
+  if (!child) return;
+  if (child.parentId === null) {
+    showStatus("中心主题不能再增加父主题", 1800);
+    return;
+  }
+  const currentParent = getNode(child.parentId);
+  if (!currentParent) return;
+  pushHistory();
+  const id = `n${nodeCounter++}`;
+  const parentNode = {
+    id,
+    parentId: currentParent.id,
+    text: NEW_TOPIC_TEXT,
+    side: child.side || chooseSide(currentParent),
+    color: child.color || currentParent.color,
+    collapsed: false,
+    width: defaultNodeWidth({ id: "branch" }),
+    x: 0,
+    y: 0,
+  };
+  const childIndex = nodes.findIndex((node) => node.id === child.id);
+  nodes.splice(Math.max(0, childIndex), 0, parentNode);
+  child.parentId = id;
+  selectedId = id;
+  selectedIds = new Set([id]);
+  editingId = null;
+  animateNewNode(id);
+  render();
+  if (startEditing) beginEditing(id, true);
+}
+
 function toggleFold(id) {
   const node = getNode(id);
   if (!node || !childrenOf(id).length) return;
@@ -4724,9 +4758,13 @@ nodesLayer.addEventListener("keydown", (event) => {
     event.preventDefault();
     event.stopPropagation();
     syncEditingText();
-    const parentId = editingId;
+    const currentId = editingId;
     finishEditing();
-    addChild(parentId, true);
+    if (event.shiftKey) {
+      addParent(currentId, true);
+    } else {
+      addChild(currentId, true);
+    }
   } else if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
@@ -5109,7 +5147,11 @@ viewport.addEventListener("keydown", (event) => {
     addSibling();
   } else if (event.key === "Tab") {
     event.preventDefault();
-    addChild();
+    if (event.shiftKey) {
+      addParent();
+    } else {
+      addChild();
+    }
   } else if (event.key === "F2") {
     event.preventDefault();
     beginEditing();
