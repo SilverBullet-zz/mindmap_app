@@ -24,6 +24,7 @@ const NEW_TOPIC_TEXT = "分支";
 const LEGACY_NEW_TOPIC_TEXT = "新主题";
 const DOCUMENT_IMAGE_MIN_SIZE = 56;
 const DOCUMENT_IMAGE_MAX_SIZE = 1200;
+const MAX_PROJECT_NODES = 3000;
 const NODE_WIDTH_RULES = {
   root: { min: 300, max: 540, seed: 300, padding: 60, fontSize: 24, fontWeight: 750 },
   branch: { min: 220, max: 420, seed: 220, padding: 54, fontSize: 16, fontWeight: 650 },
@@ -1790,13 +1791,18 @@ function copySelectedSubtree() {
 function pasteSubtree(targetId = selectedId) {
   const target = getNode(targetId);
   if (!target || !internalClipboard) return;
+  if (nodes.length + internalClipboard.nodes.length > MAX_PROJECT_NODES) {
+    showStatus(`无法粘贴：脑图最多包含 ${MAX_PROJECT_NODES} 个主题`, 2600);
+    return;
+  }
   pushHistory();
+  const copiedNodes = cloneNodes(internalClipboard.nodes);
   const idMap = new Map();
-  internalClipboard.nodes.forEach((node) => {
+  copiedNodes.forEach((node) => {
     idMap.set(node.id, `n${nodeCounter++}`);
   });
   const rootIdSet = new Set(internalClipboard.rootIds);
-  const pastedNodes = internalClipboard.nodes.map((node) => ({
+  const pastedNodes = copiedNodes.map((node) => ({
     ...node,
     id: idMap.get(node.id),
     parentId: rootIdSet.has(node.id) ? target.id : idMap.get(node.parentId),
@@ -1807,11 +1813,12 @@ function pasteSubtree(targetId = selectedId) {
   target.collapsed = false;
   nodes.push(...pastedNodes);
   const newRootIds = internalClipboard.rootIds.map((id) => idMap.get(id));
+  newRootIds.forEach((id) => animateNewNode(id));
   selectedId = newRootIds[0];
   selectedIds = new Set(newRootIds);
   editingId = null;
   render();
-  showStatus(`已粘贴到“${target.text}”下`);
+  showStatus(`已将 ${pastedNodes.length} 个主题粘贴到“${target.text}”下`, 2200);
 }
 
 function navigate(direction) {
@@ -3481,6 +3488,25 @@ function renderNodeLinkMenu(nodeId, { showFiles = false } = {}) {
   title.textContent = `“${node.text || defaultTopicText(node)}”`;
   menu.append(title);
 
+  const copyBranch = document.createElement("button");
+  copyBranch.type = "button";
+  copyBranch.className = "node-link-menu-item";
+  copyBranch.dataset.action = "copy-branch";
+  copyBranch.dataset.nodeId = nodeId;
+  copyBranch.textContent = "复制此分支（含子主题）";
+  const pasteBranch = document.createElement("button");
+  pasteBranch.type = "button";
+  pasteBranch.className = "node-link-menu-item";
+  pasteBranch.dataset.action = "paste-branch";
+  pasteBranch.dataset.nodeId = nodeId;
+  pasteBranch.disabled = !internalClipboard;
+  pasteBranch.textContent = internalClipboard
+    ? `粘贴到此主题下（${internalClipboard.nodes.length} 个主题）`
+    : "粘贴到此主题下";
+  const branchDivider = document.createElement("div");
+  branchDivider.className = "node-link-menu-divider";
+  menu.append(copyBranch, pasteBranch, branchDivider);
+
   const insertImage = document.createElement("button");
   insertImage.type = "button";
   insertImage.className = "node-link-menu-item";
@@ -3834,7 +3860,7 @@ function normalizeProject(data) {
   if (!data || data.format !== "mindmap" || data.version !== 1 || !Array.isArray(data.nodes)) {
     throw new Error("这不是受支持的 Mindmap 工程文件");
   }
-  if (data.nodes.length < 1 || data.nodes.length > 3000) {
+  if (data.nodes.length < 1 || data.nodes.length > MAX_PROJECT_NODES) {
     throw new Error("工程文件的主题数量无效");
   }
 
@@ -3926,7 +3952,6 @@ function applyProjectData(
   editingId = null;
   activeDocumentId = null;
   if (nodeDocumentOverlay) nodeDocumentOverlay.hidden = true;
-  internalClipboard = null;
   history = [];
   future = [];
   nodeCounter = Math.max(
@@ -5510,6 +5535,14 @@ document.addEventListener("click", async (event) => {
   if (item.dataset.action === "link-file") {
     setSelection([nodeId], nodeId);
     await linkSelectedNodeToWorkspaceFile(item.dataset.name);
+    hideNodeLinkMenu();
+  } else if (item.dataset.action === "copy-branch") {
+    setSelection([nodeId], nodeId);
+    copySelectedSubtree();
+    hideNodeLinkMenu();
+  } else if (item.dataset.action === "paste-branch") {
+    setSelection([nodeId], nodeId);
+    pasteSubtree(nodeId);
     hideNodeLinkMenu();
   } else if (item.dataset.action === "insert-node-image") {
     setSelection([nodeId], nodeId);

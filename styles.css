@@ -2768,6 +2768,12 @@ textarea:focus-visible {
   color: #176f61;
 }
 
+.node-link-menu-item:disabled {
+  color: #9cada5;
+  background: transparent;
+  cursor: not-allowed;
+}
+
 @keyframes overlay-fade {
   from {
     opacity: 0;
