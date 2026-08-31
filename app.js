@@ -2775,6 +2775,7 @@ function inferProjectImageFolder(data, projectNodes = []) {
 function defaultMapImageFolder() {
   if (currentWorkspaceFileName) {
     const directory = workspacePathDirectory(currentWorkspaceFileName);
+    if (/_pictures$/i.test(workspacePathFileName(directory))) return directory;
     const { base } = splitWorkspaceMapFileName(currentWorkspaceFileName);
     return joinWorkspacePath(directory, `${safeFileBaseName(base)}_pictures`);
   }
@@ -2800,6 +2801,53 @@ async function uniqueWorkspaceImageFileName(directoryHandle, baseName, extension
   return fileName;
 }
 
+async function ensureCurrentMapInImageFolder(folderPath) {
+  const normalizedFolder = normalizeWorkspaceImageFolder(folderPath);
+  if (!normalizedFolder) throw new Error("INVALID_IMAGE_FOLDER");
+  if (currentWorkspaceFileName && workspacePathDirectory(currentWorkspaceFileName) === normalizedFolder) {
+    return true;
+  }
+
+  if (!currentWorkspaceFileName) {
+    const directory = await getWorkspaceDirectoryHandleByPath(normalizedFolder, { create: true });
+    const fileName = await uniqueDirectoryFileName(directory, defaultFileBaseName(), ".mindmap.json");
+    const targetPath = joinWorkspacePath(normalizedFolder, fileName);
+    const data = projectData();
+    data.localId = currentLocalId;
+    data.imageFolder = normalizedFolder;
+    let saved = false;
+    try {
+      saved = await writeWorkspaceProjectFile(targetPath, data);
+    } catch (error) {
+      if (currentWorkspaceFileName !== targetPath) {
+        try {
+          await removeWorkspaceFileByPath(targetPath);
+        } catch {
+          // The target may not have been created yet.
+        }
+      }
+      throw error;
+    }
+    if (!saved) {
+      try {
+        await removeWorkspaceFileByPath(targetPath);
+      } catch {
+        // The target may not have been created yet.
+      }
+      throw new Error("MAP_FILE_MOVE_FAILED");
+    }
+    autosaveDirty = false;
+    expandedWorkspaceFolders.add(normalizedFolder);
+    await refreshWorkspaceFiles();
+    return true;
+  }
+
+  if (!workspaceFileByName(currentWorkspaceFileName)) await refreshWorkspaceFiles();
+  const moved = await moveWorkspaceMapFile(currentWorkspaceFileName, normalizedFolder);
+  if (!moved) throw new Error("MAP_FILE_MOVE_FAILED");
+  return true;
+}
+
 async function saveDocumentImageFile(file) {
   if (!file?.type?.startsWith("image/")) throw new Error("NOT_IMAGE");
   if (!workspaceDirectoryHandle) throw new Error("NO_WORKSPACE");
@@ -2809,6 +2857,7 @@ async function saveDocumentImageFile(file) {
   if (!folderPath) throw new Error("INVALID_IMAGE_FOLDER");
   currentMapImageFolder = folderPath;
   const directory = await getWorkspaceDirectoryHandleByPath(folderPath, { create: true });
+  await ensureCurrentMapInImageFolder(folderPath);
   const extension = imageExtensionForFile(file);
   const baseName = safeImageFileBaseName(file.name || `image-${Date.now()}`);
   const fileName = await uniqueWorkspaceImageFileName(directory, baseName, extension);
@@ -2831,6 +2880,8 @@ async function insertDocumentImageFile(file) {
       showStatus("请先选择工作目录后再插入图片", 2600);
     } else if (error?.message === "NO_WORKSPACE_PERMISSION") {
       showStatus("需要授权工作目录写入权限", 2600);
+    } else if (error?.message === "MAP_FILE_MOVE_FAILED") {
+      showStatus("脑图文件未能安全移入图片文件夹，图片未添加", 3000);
     } else {
       showStatus("无法保存图片", 2200);
     }
@@ -2870,6 +2921,8 @@ async function attachImageToNode(file, nodeId = selectedId, { fromPaste = false 
       showStatus("请先选择工作目录后再粘贴图片", 2600);
     } else if (error?.message === "NO_WORKSPACE_PERMISSION") {
       showStatus("需要授权工作目录写入权限", 2600);
+    } else if (error?.message === "MAP_FILE_MOVE_FAILED") {
+      showStatus("脑图文件未能安全移入图片文件夹，图片未添加", 3000);
     } else {
       showStatus("无法粘贴图片", 2200);
     }
