@@ -153,7 +153,7 @@ let workspaceDragFilePath = "";
 let workspaceSelectedFileKey = "";
 let currentMapImageFolder = "";
 let mapReturnStack = [];
-let titleEditedByUser = false;
+let documentTitleEditSnapshot = null;
 let nodeLinkMenu = null;
 let documentImageResize = null;
 let selectedDocumentImageLine = null;
@@ -375,7 +375,7 @@ function searchText(value) {
 }
 
 function currentMapTitle() {
-  return documentTitleInput.value.trim() || getNode("root")?.text?.trim() || DEFAULT_DOCUMENT_TITLE;
+  return rootTopicTitle();
 }
 
 function rootTopicTitle() {
@@ -386,41 +386,13 @@ function rootTitleFromNodes(projectNodes = nodes) {
   return projectNodes.find((node) => node.id === "root" || node.parentId === null)?.text?.trim() || ROOT_TOPIC_TEXT;
 }
 
-function isDefaultBlankProject(data) {
-  const projectNodes = Array.isArray(data?.nodes) ? data.nodes : [];
-  if (projectNodes.length !== 5) return false;
-  const root = projectNodes.find((node) => node.id === "root" || node.parentId === null);
-  if (!root || String(root.text || "").trim() !== ROOT_TOPIC_TEXT) return false;
-  return projectNodes.every((node) => {
-    const text = String(node.text || "").trim();
-    const isExpectedText = node === root
-      ? text === ROOT_TOPIC_TEXT
-      : text === NEW_TOPIC_TEXT || text === LEGACY_NEW_TOPIC_TEXT;
-    return isExpectedText &&
-      typeof node.document !== "string" &&
-      !node.mapLink &&
-      (!Array.isArray(node.images) || node.images.length === 0);
-  });
-}
-
-function shouldUseRootTitle(value = documentTitleInput.value) {
-  const title = String(value || "").trim();
-  return !title || title === DEFAULT_DOCUMENT_TITLE || title === ROOT_TOPIC_TEXT;
-}
-
 function projectDisplayTitle(data) {
-  const title = String(data?.title || "").trim();
-  const rootTitle = rootTitleFromNodes(data?.nodes || []);
-  if (isDefaultBlankProject(data)) return rootTitle;
-  return shouldUseRootTitle(title) ? rootTitle : title;
+  return rootTitleFromNodes(data?.nodes || []);
 }
 
-function syncDocumentTitleFromRoot({ force = false } = {}) {
+function syncDocumentTitleFromRoot() {
   if (!documentTitleInput) return;
-  if (!force && titleEditedByUser && !shouldUseRootTitle()) return;
-  if (force || shouldUseRootTitle()) {
-    documentTitleInput.value = rootTopicTitle();
-  }
+  documentTitleInput.value = rootTopicTitle();
 }
 
 function currentMapSnapshot({ focusNodeId = selectedId } = {}) {
@@ -1640,7 +1612,8 @@ function finishEditing() {
   const node = getNode(editingId);
   const previousText = editSnapshot?.text ?? node.text;
   const previousRichText = editSnapshot?.richText;
-  if (node.text !== previousText || (node.richText || "") !== (previousRichText || "")) {
+  const contentChanged = node.text !== previousText || (node.richText || "") !== (previousRichText || "");
+  if (contentChanged) {
     history.push(nodes.map((item) => item.id === node.id ? { ...item, text: previousText, richText: previousRichText } : { ...item }));
     future = [];
     updateHistoryButtons();
@@ -1658,6 +1631,7 @@ function finishEditing() {
     showStatus("图片已生成为链接，点击缩略图可查看原图", 2600);
   }
   viewport.focus({ preventScroll: true });
+  if (finishedId === "root" && contentChanged) void autosaveLocal({ silent: true });
 }
 
 function chooseSide(parent) {
@@ -3226,6 +3200,12 @@ async function workspaceSaveTargetName() {
   return uniqueWorkspaceFilePath(base, directory, currentWorkspaceFileName);
 }
 
+function workspaceFileNameMatchesRoot(path = currentWorkspaceFileName) {
+  if (!path) return true;
+  const expected = `${defaultFileBaseName()}.mindmap.json`;
+  return workspacePathFileName(path).toLocaleLowerCase() === expected.toLocaleLowerCase();
+}
+
 async function writeWorkspaceProjectFileWithRename(data) {
   const previousName = currentWorkspaceFileName;
   const targetName = await workspaceSaveTargetName();
@@ -3961,10 +3941,7 @@ function applyProjectData(
   zoom = view?.zoom ?? data.view.zoom;
   pan = view?.pan ?? data.view.pan;
   currentLocalId = localId;
-  const dataRootTitle = rootTitleFromNodes(data.nodes);
-  const dataTitle = String(data.title || "").trim();
   documentTitleInput.value = projectDisplayTitle(data);
-  titleEditedByUser = Boolean(dataTitle) && !shouldUseRootTitle(dataTitle) && dataTitle !== dataRootTitle;
   updateHistoryButtons();
   suppressAutosaveMark = !markDirty;
   render();
@@ -4001,7 +3978,9 @@ async function openProject(
       localStorage.setItem(WORKSPACE_CURRENT_FILE_KEY, currentWorkspaceFileName);
     }
     applyProjectData(data, { localId: projectLocalId, status, markDirty });
-    if (markDirty) await autosaveLocal();
+    const needsFileNameSync = Boolean(currentWorkspaceFileName) && !workspaceFileNameMatchesRoot();
+    if (needsFileNameSync) autosaveDirty = true;
+    if (markDirty || needsFileNameSync) await autosaveLocal();
     updateWorkspaceStatusText();
     renderWorkspaceFiles();
     updateMapReturnButton();
@@ -5675,9 +5654,45 @@ openFileInput.addEventListener("change", () => {
   openFileInput.value = "";
 });
 
+documentTitleInput.addEventListener("focus", () => {
+  documentTitleEditSnapshot = cloneNodes();
+});
 documentTitleInput.addEventListener("input", () => {
-  titleEditedByUser = !shouldUseRootTitle();
+  const root = getNode("root");
+  const value = documentTitleInput.value.slice(0, 500);
+  if (!root || !value.trim()) return;
+  root.text = value;
+  root.richText = undefined;
+  render();
   markSaving();
+});
+documentTitleInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  documentTitleInput.blur();
+});
+documentTitleInput.addEventListener("blur", () => {
+  const root = getNode("root");
+  if (!root) return;
+  const nextTitle = documentTitleInput.value.trim().slice(0, 500) || ROOT_TOPIC_TEXT;
+  const snapshotRoot = documentTitleEditSnapshot?.find((node) => node.id === "root");
+  const changed = snapshotRoot
+    ? snapshotRoot.text !== nextTitle || Boolean(snapshotRoot.richText)
+    : root.text !== nextTitle || Boolean(root.richText);
+  root.text = nextTitle;
+  root.richText = undefined;
+  documentTitleInput.value = nextTitle;
+  if (changed && documentTitleEditSnapshot) {
+    history.push(documentTitleEditSnapshot);
+    if (history.length > 60) history.shift();
+    future = [];
+    updateHistoryButtons();
+  }
+  documentTitleEditSnapshot = null;
+  render();
+  if (!changed) return;
+  markSaving();
+  void autosaveLocal({ silent: true });
 });
 document.addEventListener("keydown", (event) => {
   if (!searchState.jumpArmed) return;
