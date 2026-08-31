@@ -1505,26 +1505,66 @@ function closestTopicScript(node, label) {
   return script && label.contains(script) ? script : null;
 }
 
-function selectUnwrappedTopicScript(element, selection) {
-  const children = [...element.childNodes];
-  if (!children.length) {
-    element.remove();
-    return false;
+function topicRangeOffsets(label, range) {
+  const before = range.cloneRange();
+  before.selectNodeContents(label);
+  before.setEnd(range.startContainer, range.startOffset);
+  const start = before.toString().length;
+  return { start, end: start + range.toString().length };
+}
+
+function restoreTopicRange(label, offsets, selection) {
+  const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+  let currentOffset = 0;
+  let startPoint = null;
+  let endPoint = null;
+  let node;
+  while ((node = walker.nextNode())) {
+    const nextOffset = currentOffset + node.textContent.length;
+    if (!startPoint && offsets.start <= nextOffset) {
+      startPoint = { node, offset: clamp(offsets.start - currentOffset, 0, node.textContent.length) };
+    }
+    if (!endPoint && offsets.end <= nextOffset) {
+      endPoint = { node, offset: clamp(offsets.end - currentOffset, 0, node.textContent.length) };
+      break;
+    }
+    currentOffset = nextOffset;
   }
-  const first = children[0];
-  const last = children.at(-1);
-  element.replaceWith(...children);
+  if (!startPoint || !endPoint) return false;
   const range = document.createRange();
-  range.setStartBefore(first);
-  range.setEndAfter(last);
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
   selection.removeAllRanges();
   selection.addRange(range);
+  return true;
+}
+
+function unwrapSelectedTopicScripts(label, range, selection, tag) {
+  if (range.collapsed) return false;
+  const scripts = [...label.querySelectorAll(tag)].filter((element) => {
+    try {
+      return range.intersectsNode(element);
+    } catch {
+      return false;
+    }
+  });
+  if (!scripts.length) return false;
+  const offsets = topicRangeOffsets(label, range);
+  scripts.reverse().forEach((element) => element.replaceWith(...element.childNodes));
+  label.normalize();
+  restoreTopicRange(label, offsets, selection);
   return true;
 }
 
 function unwrapTopicScripts(container) {
   [...container.querySelectorAll("sup, sub")].reverse().forEach((element) => {
     element.replaceWith(...element.childNodes);
+  });
+}
+
+function removeEmptyTopicScripts(label) {
+  [...label.querySelectorAll("sup, sub")].forEach((element) => {
+    if (!(element.textContent || "").replace(/\u200b/g, "")) element.remove();
   });
 }
 
@@ -1538,24 +1578,28 @@ function toggleTopicScript(command) {
   let range = selection.getRangeAt(0);
   if (!label.contains(range.commonAncestorContainer)) return;
   const tag = command === "superscript" ? "sup" : "sub";
+  const oppositeTag = tag === "sup" ? "sub" : "sup";
   const activeScript = closestTopicScript(selection.anchorNode, label);
-  let active = true;
+  let active = false;
 
-  if (activeScript?.tagName.toLowerCase() === tag) {
-    if (range.collapsed) {
+  if (!range.collapsed && unwrapSelectedTopicScripts(label, range, selection, tag)) {
+    active = false;
+  } else if (range.collapsed && activeScript?.tagName.toLowerCase() === tag) {
+    range = document.createRange();
+    range.setStartAfter(activeScript);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  } else {
+    if (!range.collapsed && unwrapSelectedTopicScripts(label, range, selection, oppositeTag)) {
+      range = selection.getRangeAt(0);
+    }
+    if (range.collapsed && activeScript) {
       range = document.createRange();
       range.setStartAfter(activeScript);
       range.collapse(true);
       selection.removeAllRanges();
       selection.addRange(range);
-    } else {
-      selectUnwrappedTopicScript(activeScript, selection);
-    }
-    active = false;
-  } else {
-    if (activeScript) {
-      selectUnwrappedTopicScript(activeScript, selection);
-      range = selection.getRangeAt(0);
     }
     const formatted = document.createElement(tag);
     if (range.collapsed) {
@@ -1573,14 +1617,17 @@ function toggleTopicScript(command) {
     }
     selection.removeAllRanges();
     selection.addRange(range);
+    active = true;
   }
+
+  if (!active) removeEmptyTopicScripts(label);
 
   syncEditingText();
   syncEditingNodeWidth();
   drawConnections();
   markSaving();
   const labelText = command === "superscript" ? "上标" : "下标";
-  showStatus(active ? `已启用${labelText}` : `已关闭${labelText}`, 1200);
+  showStatus(active ? `已启用${labelText}` : "已恢复普通文字", 1200);
 }
 
 function finishEditing() {
