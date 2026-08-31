@@ -726,7 +726,8 @@ function layoutMap() {
     const limits = nodeWidthLimits(node);
     const minHeight = node.id === "root" ? 86 : 56;
     const horizontalPadding = limits.padding;
-    const verticalPadding = node.id === "root" ? 32 : 30;
+    const imageHeaderHeight = nodeImages(node).length ? 34 : 0;
+    const verticalPadding = (node.id === "root" ? 32 : 30) + imageHeaderHeight;
     const lineHeight = limits.fontSize * 1.42;
     const widthForWrap = clamp(node.width || limits.seed, limits.min, limits.max) - horizontalPadding;
     return Math.max(minHeight, estimateLineCount(node, widthForWrap) * lineHeight + verticalPadding);

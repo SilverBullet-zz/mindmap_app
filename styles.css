@@ -1612,6 +1612,10 @@ textarea:focus-visible {
   border-style: solid;
 }
 
+.topic-node.has-image {
+  padding-top: 46px;
+}
+
 .map-link-badge {
   position: absolute;
   right: 7px;
@@ -1631,8 +1635,8 @@ textarea:focus-visible {
 
 .node-image-badge {
   position: absolute;
-  left: 6px;
-  top: 6px;
+  left: 10px;
+  top: 9px;
   display: inline-grid;
   place-items: center;
   width: 34px;
