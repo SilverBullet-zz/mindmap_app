@@ -201,6 +201,7 @@ const workspaceCapabilities = document.querySelector("#workspace-capabilities");
 const workspaceSourceNote = document.querySelector("#workspace-source-note");
 const chooseWorkspaceFolderButton = document.querySelector("#choose-workspace-folder");
 const openWorkspaceFileButton = document.querySelector("#open-workspace-file");
+const newWorkspaceMapButton = document.querySelector("#new-workspace-map");
 const refreshWorkspaceFilesButton = document.querySelector("#refresh-workspace-files");
 const workspaceFileCount = document.querySelector("#workspace-file-count");
 const workspaceFileList = document.querySelector("#workspace-file-list");
@@ -2154,9 +2155,9 @@ function updateWorkspaceUi() {
   }
   workspaceCollapseButton.title = collapsed ? "展开工作目录" : "收起工作目录";
   workspaceCollapseButton.setAttribute("aria-label", workspaceCollapseButton.title);
-  chooseWorkspaceFolderButton.textContent = supported ? "选择文件夹" : "本地模式";
+  chooseWorkspaceFolderButton.querySelector(".workspace-action-label").textContent = supported ? "选择文件夹" : "本地模式";
   chooseWorkspaceFolderButton.disabled = !supported;
-  openWorkspaceFileButton.textContent = supported ? "打开文件" : "导入文件";
+  openWorkspaceFileButton.querySelector(".workspace-action-label").textContent = supported ? "打开文件" : "导入文件";
   const width = Number(localStorageAvailable() ? localStorage.getItem(WORKSPACE_WIDTH_KEY) : 0);
   if (Number.isFinite(width) && width >= 190 && width <= 420) {
     document.documentElement.style.setProperty("--workspace-sidebar-width", `${width}px`);
@@ -5610,6 +5611,7 @@ compareOverlay.addEventListener("click", (event) => {
   if (event.target === compareOverlay) closeCompareOverlay();
 });
 newLocalMapButton.addEventListener("click", () => newLocalMap());
+newWorkspaceMapButton.addEventListener("click", () => newLocalMap());
 trashButton.addEventListener("click", () => {
   homeMode = homeMode === "trash" ? "maps" : "trash";
   renderHomeList();

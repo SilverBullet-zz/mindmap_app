@@ -12,7 +12,7 @@
     <title>枝图 - 思维导图</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=52" />
+    <link rel="stylesheet" href="./styles.css?v=53" />
   </head>
   <body>
     <div class="app-shell">
@@ -123,8 +123,14 @@
             </div>
             <div class="workspace-source-note" id="workspace-source-note"></div>
             <div class="workspace-sidebar-actions">
-              <button class="secondary-button" id="choose-workspace-folder" type="button">选择文件夹</button>
-              <button class="secondary-button" id="open-workspace-file" type="button">打开文件</button>
+              <button class="secondary-button" id="choose-workspace-folder" type="button" title="选择工作目录">
+                <span class="folder-icon" aria-hidden="true"></span>
+                <span class="workspace-action-label">选择文件夹</span>
+              </button>
+              <button class="secondary-button" id="open-workspace-file" type="button" title="打开思维导图文件">
+                <span class="workspace-open-icon" aria-hidden="true"></span>
+                <span class="workspace-action-label">打开文件</span>
+              </button>
             </div>
             <details class="workspace-diagnostics">
               <summary>环境状态</summary>
@@ -136,7 +142,14 @@
                   <span>文件</span>
                   <small id="workspace-file-count">0 个</small>
                 </div>
-                <button class="text-button" id="refresh-workspace-files" type="button" title="刷新文件列表">刷新</button>
+                <div class="workspace-file-header-actions">
+                  <button class="workspace-header-action" id="new-workspace-map" type="button" title="新建思维导图 (Ctrl+N)" aria-label="新建思维导图">
+                    <span class="plus-icon" aria-hidden="true"></span>
+                  </button>
+                  <button class="workspace-header-action" id="refresh-workspace-files" type="button" title="刷新文件列表" aria-label="刷新文件列表">
+                    <span class="workspace-refresh-icon" aria-hidden="true">↻</span>
+                  </button>
+                </div>
               </div>
               <div class="workspace-file-list" id="workspace-file-list" tabindex="0" aria-label="工作目录文件列表"></div>
             </div>
@@ -257,6 +270,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=83"></script>
+    <script src="./app.js?v=84"></script>
   </body>
 </html>
